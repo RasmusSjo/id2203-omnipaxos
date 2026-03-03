@@ -16,4 +16,4 @@ docs/.DS_Store
 # Unused workspace files for group project
 /examples/*
 /omnipaxos_ui/*
-
+/docs/*

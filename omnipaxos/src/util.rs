@@ -422,6 +422,8 @@ pub trait PhysicalClock {
     fn get_time(&self) -> i64;
     /// Returns the uncertainty of the physical time.
     fn get_uncertainty(&self) -> i64;
+    /// Returns the pair of the current physical time and its uncertainty.
+    fn get_time_with_uncertainty(&self) -> (i64, i64);
 }
 
 /// System clock that returns UTC nanoseconds since Unix epoch.
@@ -442,6 +444,10 @@ impl PhysicalClock for SystemClock {
 
     fn get_uncertainty(&self) -> i64 {
         0
+    }
+
+    fn get_time_with_uncertainty(&self) -> (i64, i64) {
+        (self.get_time(), self.get_uncertainty())
     }
 }
 

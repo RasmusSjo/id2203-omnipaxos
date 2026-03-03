@@ -15,7 +15,7 @@ use crate::{
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{fmt::Debug, vec};
+use std::{fmt::Debug, vec, collections::HashMap, collections::HashSet as Set};
 
 pub mod follower;
 pub mod leader;
@@ -42,8 +42,19 @@ where
     // Keeps track of sequence of accepts from leader where AcceptSync = 1
     current_seq_num: SequenceNumber,
     cached_promise_message: Option<Promise<T>>,
+    // Project paxos modifications:
+    accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
+    unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
     #[cfg(feature = "logging")]
     logger: Logger,
+}
+
+type Hash = Vec<u8>;
+struct AcceptedMapEntry<T: Entry> {
+    entry: T,
+    prev_hash: Hash,
+    fast: HashMap<(Hash, Hash), Set<NodeId>>,
+    slow: Set<NodeId>,
 }
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
@@ -102,6 +113,8 @@ where
             latest_accepted_meta: None,
             current_seq_num: SequenceNumber::default(),
             cached_promise_message: None,
+            accepted_map: HashMap::new(),
+            unsynced_log_store: vec![],
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {

@@ -6,10 +6,11 @@ use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG};
 
 use super::*;
 
-impl<T, B> SequencePaxos<T, B>
+impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
     /// Handle a new leader. Should be called when the leader election has elected a new leader with the ballot `n`
     /*** Leader ***/

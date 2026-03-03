@@ -8,7 +8,8 @@ use crate::{
         Entry, Snapshot, StopSign, Storage,
     },
     util::{
-        FlexibleQuorum, LogSync, NodeId, Quorum, SequenceNumber, READ_ERROR_MSG, WRITE_ERROR_MSG,
+        FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber, READ_ERROR_MSG,
+        WRITE_ERROR_MSG,
     },
     ClusterConfig, CompactionErr, OmniPaxosConfig, ProposeErr,
 };
@@ -22,11 +23,13 @@ pub mod leader;
 /// a Sequence Paxos replica. Maintains local state of the replicated log, handles incoming messages and produces outgoing messages that the user has to fetch periodically and send using a network implementation.
 /// User also has to periodically fetch the decided entries that are guaranteed to be strongly consistent and linearizable, and therefore also safe to be used in the higher level application.
 /// If snapshots are not desired to be used, use `()` for the type parameter `S`.
-pub(crate) struct SequencePaxos<T, B>
+pub(crate) struct SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
+    clock: &'a C,
     pub(crate) internal_storage: InternalStorage<B, T>,
     pid: NodeId,
     peers: Vec<NodeId>, // excluding self pid
@@ -43,14 +46,15 @@ where
     logger: Logger,
 }
 
-impl<T, B> SequencePaxos<T, B>
+impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
     /*** User functions ***/
     /// Creates a Sequence Paxos replica.
-    pub(crate) fn with(config: SequencePaxosConfig, storage: B) -> Self {
+    pub(crate) fn with(config: SequencePaxosConfig, storage: B, clock: &'a C) -> Self {
         let pid = config.pid;
         let peers = config.peers;
         let num_nodes = &peers.len() + 1;
@@ -81,6 +85,7 @@ where
             batch_size: config.batch_size,
         };
         let mut paxos = SequencePaxos {
+            clock,
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,

@@ -45,6 +45,8 @@ where
     // Project paxos modifications:
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
     unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
+    synced_hash: Hash,
+    unsyched_hash: Hash, // for efficient hashing in slow-path
     #[cfg(feature = "logging")]
     logger: Logger,
 }
@@ -115,6 +117,8 @@ where
             cached_promise_message: None,
             accepted_map: HashMap::new(),
             unsynced_log_store: vec![],
+            synced_hash: vec![],
+            unsyched_hash: vec![],
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {

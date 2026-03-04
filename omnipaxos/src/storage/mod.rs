@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Debug, Display, Formatter},
+    hash::{Hash},
 };
 
 #[derive(Debug)]
@@ -30,7 +31,7 @@ fn unsupported<T>(name: &'static str) -> StorageResult<T> {
 }
 
 /// Type of the entries stored in the log.
-pub trait Entry: Clone + Debug {
+pub trait Entry: Clone + Debug + Hash {
     #[cfg(not(feature = "serde"))]
     /// The snapshot type for this entry type.
     type Snapshot: Snapshot<Self>;

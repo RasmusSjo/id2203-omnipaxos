@@ -4,10 +4,11 @@ use super::*;
 
 use crate::util::{MessageStatus, WRITE_ERROR_MSG};
 
-impl<T, B> SequencePaxos<T, B>
+impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
     /*** Follower ***/
     pub(crate) fn handle_prepare(&mut self, prep: Prepare, from: NodeId) {

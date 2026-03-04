@@ -8,13 +8,14 @@ use crate::{
         Entry, Snapshot, StopSign, Storage,
     },
     util::{
-        FlexibleQuorum, LogSync, NodeId, Quorum, SequenceNumber, READ_ERROR_MSG, WRITE_ERROR_MSG,
+        FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber, READ_ERROR_MSG,
+        WRITE_ERROR_MSG,
     },
     ClusterConfig, CompactionErr, OmniPaxosConfig, ProposeErr,
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{fmt::Debug, vec};
+use std::{fmt::Debug, vec, collections::HashMap, collections::HashSet as Set};
 
 pub mod follower;
 pub mod leader;
@@ -22,11 +23,13 @@ pub mod leader;
 /// a Sequence Paxos replica. Maintains local state of the replicated log, handles incoming messages and produces outgoing messages that the user has to fetch periodically and send using a network implementation.
 /// User also has to periodically fetch the decided entries that are guaranteed to be strongly consistent and linearizable, and therefore also safe to be used in the higher level application.
 /// If snapshots are not desired to be used, use `()` for the type parameter `S`.
-pub(crate) struct SequencePaxos<T, B>
+pub(crate) struct SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
+    clock: &'a C,
     pub(crate) internal_storage: InternalStorage<B, T>,
     pid: NodeId,
     peers: Vec<NodeId>, // excluding self pid
@@ -39,18 +42,30 @@ where
     // Keeps track of sequence of accepts from leader where AcceptSync = 1
     current_seq_num: SequenceNumber,
     cached_promise_message: Option<Promise<T>>,
+    // Project paxos modifications:
+    accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
+    unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
     #[cfg(feature = "logging")]
     logger: Logger,
 }
 
-impl<T, B> SequencePaxos<T, B>
+type Hash = Vec<u8>;
+struct AcceptedMapEntry<T: Entry> {
+    entry: T,
+    prev_hash: Hash,
+    fast: HashMap<(Hash, Hash), Set<NodeId>>,
+    slow: Set<NodeId>,
+}
+
+impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
     T: Entry,
     B: Storage<T>,
+    C: PhysicalClock,
 {
     /*** User functions ***/
     /// Creates a Sequence Paxos replica.
-    pub(crate) fn with(config: SequencePaxosConfig, storage: B) -> Self {
+    pub(crate) fn with(config: SequencePaxosConfig, storage: B, clock: &'a C) -> Self {
         let pid = config.pid;
         let peers = config.peers;
         let num_nodes = &peers.len() + 1;
@@ -81,6 +96,7 @@ where
             batch_size: config.batch_size,
         };
         let mut paxos = SequencePaxos {
+            clock,
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,
@@ -97,6 +113,8 @@ where
             latest_accepted_meta: None,
             current_seq_num: SequenceNumber::default(),
             cached_promise_message: None,
+            accepted_map: HashMap::new(),
+            unsynced_log_store: vec![],
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {

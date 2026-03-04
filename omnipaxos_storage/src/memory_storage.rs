@@ -11,12 +11,12 @@ where
 {
     /// Vector which contains all the logged entries in-memory.
     log: Vec<T>,
-    /// Vector which contains all the synced log entries in-memory.
-    synlog: Vec<T>,
-    /// Garbage collected index for synced log.
-    synlog_trimmed_idx: usize,
-    /// Stored compact index for synced log.
-    synlog_compacted_idx: usize,
+    /// Vector which contains all the synced log entries in-memory. But we can use log for this as well. So I commented it out for now.
+    // synlog: Vec<T>,
+    // /// Garbage collected index for synced log.
+    // synlog_trimmed_idx: usize,
+    // /// Stored compact index for synced log.
+    // synlog_compacted_idx: usize,
     /// Map which contains unsynced entries in-memory.
     unsynlog: HashMap<usize, T>,
     /// Last promised round.
@@ -153,55 +153,55 @@ where
         Ok(self.snapshot.clone())
     }
 
-    fn synlog_append_entry(&mut self, entry: T) -> StorageResult<()> {
-        self.synlog.push(entry);
-        Ok(())
-    }
+    // fn synlog_append_entry(&mut self, entry: T) -> StorageResult<()> {
+    //     self.synlog.push(entry);
+    //     Ok(())
+    // }
 
-    fn synlog_append_entries(&mut self, entries: Vec<T>) -> StorageResult<()> {
-        let mut e = entries;
-        self.synlog.append(&mut e);
-        Ok(())
-    }
+    // fn synlog_append_entries(&mut self, entries: Vec<T>) -> StorageResult<()> {
+    //     let mut e = entries;
+    //     self.synlog.append(&mut e);
+    //     Ok(())
+    // }
 
-    fn synlog_append_on_prefix(&mut self, from_idx: usize, entries: Vec<T>) -> StorageResult<()> {
-        self.synlog
-            .truncate(from_idx - self.synlog_trimmed_idx);
-        self.synlog_append_entries(entries)
-    }
+    // fn synlog_append_on_prefix(&mut self, from_idx: usize, entries: Vec<T>) -> StorageResult<()> {
+    //     self.synlog
+    //         .truncate(from_idx - self.synlog_trimmed_idx);
+    //     self.synlog_append_entries(entries)
+    // }
 
-    fn synlog_get_entries(&self, from: usize, to: usize) -> StorageResult<Vec<T>> {
-        let from = from - self.synlog_trimmed_idx;
-        let to = to - self.synlog_trimmed_idx;
-        Ok(self.synlog.get(from..to).unwrap_or(&[]).to_vec())
-    }
+    // fn synlog_get_entries(&self, from: usize, to: usize) -> StorageResult<Vec<T>> {
+    //     let from = from - self.synlog_trimmed_idx;
+    //     let to = to - self.synlog_trimmed_idx;
+    //     Ok(self.synlog.get(from..to).unwrap_or(&[]).to_vec())
+    // }
 
-    fn synlog_get_log_len(&self) -> StorageResult<usize> {
-        Ok(self.synlog.len())
-    }
+    // fn synlog_get_log_len(&self) -> StorageResult<usize> {
+    //     Ok(self.synlog.len())
+    // }
 
-    fn synlog_get_suffix(&self, from: usize) -> StorageResult<Vec<T>> {
-        Ok(match self.synlog.get((from - self.synlog_trimmed_idx)..) {
-            Some(s) => s.to_vec(),
-            None => vec![],
-        })
-    }
+    // fn synlog_get_suffix(&self, from: usize) -> StorageResult<Vec<T>> {
+    //     Ok(match self.synlog.get((from - self.synlog_trimmed_idx)..) {
+    //         Some(s) => s.to_vec(),
+    //         None => vec![],
+    //     })
+    // }
 
-    fn synlog_trim(&mut self, trimmed_idx: usize) -> StorageResult<()> {
-        let to_trim = (trimmed_idx - self.synlog_trimmed_idx).min(self.synlog.len());
-        self.synlog.drain(0..to_trim);
-        self.synlog_trimmed_idx = trimmed_idx;
-        Ok(())
-    }
+    // fn synlog_trim(&mut self, trimmed_idx: usize) -> StorageResult<()> {
+    //     let to_trim = (trimmed_idx - self.synlog_trimmed_idx).min(self.synlog.len());
+    //     self.synlog.drain(0..to_trim);
+    //     self.synlog_trimmed_idx = trimmed_idx;
+    //     Ok(())
+    // }
 
-    fn synlog_set_compacted_idx(&mut self, compact_idx: usize) -> StorageResult<()> {
-        self.synlog_compacted_idx = compact_idx;
-        Ok(())
-    }
+    // fn synlog_set_compacted_idx(&mut self, compact_idx: usize) -> StorageResult<()> {
+    //     self.synlog_compacted_idx = compact_idx;
+    //     Ok(())
+    // }
 
-    fn synlog_get_compacted_idx(&self) -> StorageResult<usize> {
-        Ok(self.synlog_compacted_idx)
-    }
+    // fn synlog_get_compacted_idx(&self) -> StorageResult<usize> {
+    //     Ok(self.synlog_compacted_idx)
+    // }
 
     fn unsynlog_put(&mut self, idx: usize, entry: T) -> StorageResult<()> {
         self.unsynlog.insert(idx, entry);
@@ -227,9 +227,9 @@ impl<T: Entry> Default for MemoryStorage<T> {
     fn default() -> Self {
         Self {
             log: vec![],
-            synlog: vec![],
-            synlog_trimmed_idx: 0,
-            synlog_compacted_idx: 0,
+            // synlog: vec![],
+            // synlog_trimmed_idx: 0,
+            // synlog_compacted_idx: 0,
             unsynlog: HashMap::new(),
             n_prom: None,
             acc_round: None,

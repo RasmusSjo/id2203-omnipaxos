@@ -214,51 +214,51 @@ where
     /// Returns the stored snapshot.
     fn get_snapshot(&self) -> StorageResult<Option<T::Snapshot>>;
 
-    /*** Synced log (SynLog) ***/
-    /// Appends an entry to the end of the synced log.
-    fn synlog_append_entry(&mut self, _entry: T) -> StorageResult<()> {
-        unsupported("synlog_append_entry")
-    }
+    // /*** Synced log (SynLog) ***/
+    // /// Appends an entry to the end of the synced log.
+    // fn synlog_append_entry(&mut self, _entry: T) -> StorageResult<()> {
+    //     unsupported("synlog_append_entry")
+    // }
 
-    /// Appends entries to the end of the synced log.
-    fn synlog_append_entries(&mut self, _entries: Vec<T>) -> StorageResult<()> {
-        unsupported("synlog_append_entries")
-    }
+    // /// Appends entries to the end of the synced log.
+    // fn synlog_append_entries(&mut self, _entries: Vec<T>) -> StorageResult<()> {
+    //     unsupported("synlog_append_entries")
+    // }
 
-    /// Appends entries to the synced log from the prefix specified by the given index.
-    fn synlog_append_on_prefix(&mut self, _from_idx: usize, _entries: Vec<T>) -> StorageResult<()> {
-        unsupported("synlog_append_on_prefix")
-    }
+    // /// Appends entries to the synced log from the prefix specified by the given index.
+    // fn synlog_append_on_prefix(&mut self, _from_idx: usize, _entries: Vec<T>) -> StorageResult<()> {
+    //     unsupported("synlog_append_on_prefix")
+    // }
 
-    /// Returns the entries in the synced log in the index interval of [from, to).
-    fn synlog_get_entries(&self, _from: usize, _to: usize) -> StorageResult<Vec<T>> {
-        unsupported("synlog_get_entries")
-    }
+    // /// Returns the entries in the synced log in the index interval of [from, to).
+    // fn synlog_get_entries(&self, _from: usize, _to: usize) -> StorageResult<Vec<T>> {
+    //     unsupported("synlog_get_entries")
+    // }
 
-    /// Returns the current length of the synced log (without the trimmed/snapshotted entries).
-    fn synlog_get_log_len(&self) -> StorageResult<usize> {
-        unsupported("synlog_get_log_len")
-    }
+    // /// Returns the current length of the synced log (without the trimmed/snapshotted entries).
+    // fn synlog_get_log_len(&self) -> StorageResult<usize> {
+    //     unsupported("synlog_get_log_len")
+    // }
 
-    /// Returns the suffix of entries in the synced log from index `from` (inclusive).
-    fn synlog_get_suffix(&self, _from: usize) -> StorageResult<Vec<T>> {
-        unsupported("synlog_get_suffix")
-    }
+    // /// Returns the suffix of entries in the synced log from index `from` (inclusive).
+    // fn synlog_get_suffix(&self, _from: usize) -> StorageResult<Vec<T>> {
+    //     unsupported("synlog_get_suffix")
+    // }
 
-    /// Removes elements up to the given [`idx`] from the synced log.
-    fn synlog_trim(&mut self, _idx: usize) -> StorageResult<()> {
-        unsupported("synlog_trim")
-    }
+    // /// Removes elements up to the given [`idx`] from the synced log.
+    // fn synlog_trim(&mut self, _idx: usize) -> StorageResult<()> {
+    //     unsupported("synlog_trim")
+    // }
 
-    /// Sets the compacted (i.e. trimmed or snapshotted) index for the synced log.
-    fn synlog_set_compacted_idx(&mut self, _idx: usize) -> StorageResult<()> {
-        unsupported("synlog_set_compacted_idx")
-    }
+    // /// Sets the compacted (i.e. trimmed or snapshotted) index for the synced log.
+    // fn synlog_set_compacted_idx(&mut self, _idx: usize) -> StorageResult<()> {
+    //     unsupported("synlog_set_compacted_idx")
+    // }
 
-    /// Returns the compacted index for the synced log.
-    fn synlog_get_compacted_idx(&self) -> StorageResult<usize> {
-        unsupported("synlog_get_compacted_idx")
-    }
+    // /// Returns the compacted index for the synced log.
+    // fn synlog_get_compacted_idx(&self) -> StorageResult<usize> {
+    //     unsupported("synlog_get_compacted_idx")
+    // }
 
     /*** Unsynced log (UnsynLog) ***/
     /// Inserts or updates an unsynced entry with the given index.

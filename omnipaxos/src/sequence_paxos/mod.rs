@@ -289,6 +289,7 @@ where
             },
             PaxosMsg::AcceptSync(acc_sync) => self.handle_acceptsync(acc_sync, m.from),
             PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
+            PaxosMsg::FastAccept(acc) => self.handle_fastaccept(acc),
             PaxosMsg::NotAccepted(not_acc) => self.handle_notaccepted(not_acc, m.from),
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
             PaxosMsg::Decide(d) => self.handle_decide(d),

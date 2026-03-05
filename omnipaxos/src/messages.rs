@@ -101,7 +101,7 @@ pub mod sequence_paxos {
         pub entries: Vec<T::EncodeResult>,
     }
 
-    /// Message sent by follower to leader when entries has been accepted.
+    /// Message sent by follower to leader when entries has been accepted.  
     #[derive(Copy, Clone, Debug)]
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct Accepted {
@@ -109,6 +109,23 @@ pub mod sequence_paxos {
         pub n: Ballot,
         /// The accepted index.
         pub accepted_idx: usize,
+    }
+
+    /// FastAccepted message
+    #[derive(Clone, Debug)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct FastAccepted<T>
+    where
+        T: Entry,
+    {
+        /// The current round.
+        pub n: Ballot,
+        /// The index in the log where the follower placed this entry.
+        pub idx: usize,
+        /// The entry the follower accepted optimistically.
+        pub entry: T,
+        /// Hash of the follower's log prefix before this entry.
+        pub prev_hash: Vec<u8>,
     }
 
     /// Message sent by leader to followers to decide up to a certain index in the log.
@@ -169,6 +186,7 @@ pub mod sequence_paxos {
         AcceptSync(AcceptSync<T>),
         AcceptDecide(AcceptDecide<T>),
         Accepted(Accepted),
+        FastAccepted(FastAccepted<T>),
         NotAccepted(NotAccepted),
         Decide(Decide),
         /// Forward client proposals to the leader.

@@ -15,7 +15,7 @@ use crate::{
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{fmt::Debug, vec, collections::HashMap, collections::HashSet as Set};
+use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
 
 pub mod follower;
 pub mod leader;
@@ -291,6 +291,7 @@ where
             PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
             PaxosMsg::NotAccepted(not_acc) => self.handle_notaccepted(not_acc, m.from),
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
+            PaxosMsg::FastAccepted(fast_acc) => self.handle_fast_accepted(fast_acc, m.from),
             PaxosMsg::Decide(d) => self.handle_decide(d),
             PaxosMsg::ProposalForward(proposals) => self.handle_forwarded_proposal(proposals),
             PaxosMsg::Compaction(c) => self.handle_compaction(c),

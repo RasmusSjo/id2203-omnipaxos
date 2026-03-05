@@ -45,6 +45,7 @@ where
     // Project paxos modifications:
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
     unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
+    unsynced_log: HashMap<usize, T>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     #[cfg(feature = "logging")]
     logger: Logger,
 }
@@ -115,6 +116,7 @@ where
             cached_promise_message: None,
             accepted_map: HashMap::new(),
             unsynced_log_store: vec![],
+            unsynced_log: HashMap::new(),
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {
@@ -241,6 +243,48 @@ where
             Compaction::Snapshot(idx) => {
                 let _ = self.snapshot(idx, true);
             }
+        }
+    }
+
+    //This might be in the wrong place because the algorithm PDF says it goes on the follower side,
+    //right after DOM-R, but if both followers and leaders have DOM-R, then it goes in mod.rs.
+    //If it's wrong, I'll move it in a moment.
+    pub(crate) fn handle_dom_release(&mut self, entry: T, leader: NodeId) {
+        match self.state {
+            // Leader case: append to synced-log and send Accept to followers
+            (Role::Leader, Phase::Accept) => {
+                self.accept_entry_leader(entry);
+            }
+            // Follower case: append to unsynced-log and send FastAccepted to leader
+            (Role::Follower, Phase::Accept) => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+
+                // idx = |synced-log| + |unsynced-log| + 1
+                let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
+
+                // prevHash = Hash(synced-log + unsynced-log)
+                let mut hasher = DefaultHasher::new();
+                self.internal_storage.get_accepted_idx().hash(&mut hasher);
+                self.unsynced_log.len().hash(&mut hasher);
+                let prev_hash = hasher.finish().to_le_bytes().to_vec();
+
+                // unsynced-log.append(entry)
+                self.unsynced_log.insert(idx, entry.clone());
+
+                // send <FastAccepted, promisedRnd, idx, entry>
+                self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+                    from: self.pid,
+                    to: leader,
+                    msg: PaxosMsg::FastAccepted(FastAccepted {
+                        n: self.internal_storage.get_promise(),
+                        idx,
+                        entry,
+                        prev_hash,
+                    }),
+                }));
+            }
+            _ => (),
         }
     }
 

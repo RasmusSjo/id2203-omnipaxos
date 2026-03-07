@@ -16,6 +16,7 @@ use crate::{
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
 use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
+use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
 
 pub mod follower;
 pub mod leader;
@@ -30,6 +31,7 @@ where
     C: PhysicalClock,
 {
     clock: &'a C,
+    dom: Dom<'a, T, C>,
     pub(crate) internal_storage: InternalStorage<B, T>,
     pid: NodeId,
     peers: Vec<NodeId>, // excluding self pid
@@ -96,8 +98,15 @@ where
         let internal_storage_config = InternalStorageConfig {
             batch_size: config.batch_size,
         };
+        let owd_config = OwdEstimatorConfig::new(
+            10,
+            10_000,
+            3, // Same as Nezha
+            EstimatorStrategy::Percentile {percentile: 0.5}
+        ).unwrap();
         let mut paxos = SequencePaxos {
             clock,
+            dom: Dom::new(owd_config, clock, pid),
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,
@@ -370,12 +379,48 @@ where
         }
     }
 
+    /// Append an entry with an id to the replicated log.
+    pub(crate) fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
+        if self.accepted_reconfiguration() {
+            Err(ProposeErr::PendingReconfigEntry(entry))
+        } else {
+            let dom_proposal = self.dom.create_dom_propose(entry, entry_id);
+            self.send_dom_propose(dom_proposal);
+            Ok(())
+        }
+    }
+
+    fn send_dom_propose(&mut self, prop: DomPropose<T>) {
+        // Broadcast message, include sending to self
+        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+            from: self.pid,
+            to: self.pid,
+            msg: PaxosMsg::DomPropose(prop.clone()),
+        }));
+
+        for pid in &self.peers {
+            let message = Message::SequencePaxos(PaxosMessage {
+                from: self.pid,
+                to: *pid,
+                msg: PaxosMsg::DomPropose(prop.clone()),
+            });
+            self.outgoing.push(message);
+        }
+    }
+
     fn handle_dom_propose(&mut self, prop: DomPropose<T>) {
-        // TODO implement DOM propose handling logic
+        let sender = prop.sender;
+        let ack = self.dom.handle_dom_propose(prop, self.state.0);
+
+        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+            from: self.pid,
+            to: sender,
+            msg: PaxosMsg::DomAck(ack)
+        }));
     }
 
     fn handle_dom_ack(&mut self, ack: DomAck) {
-        // TODO implement DOM ack handling logic
+        self.dom.handle_dom_ack(ack);
     }
 
     /// Propose a reconfiguration. Returns an error if already stopped or `new_config` is invalid.
@@ -514,7 +559,7 @@ pub(crate) enum Phase {
     None,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum Role {
     Follower,
     Leader,

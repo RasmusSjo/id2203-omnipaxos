@@ -342,6 +342,8 @@ where
             PaxosMsg::Compaction(c) => self.handle_compaction(c),
             PaxosMsg::AcceptStopSign(acc_ss) => self.handle_accept_stopsign(acc_ss),
             PaxosMsg::ForwardStopSign(f_ss) => self.handle_forwarded_stopsign(f_ss),
+            PaxosMsg::DomPropose(prop) => self.handle_dom_propose(prop),
+            PaxosMsg::DomAck(ack) => self.handle_dom_ack(ack),
         }
     }
 
@@ -366,6 +368,14 @@ where
             self.propose_entry(entry);
             Ok(())
         }
+    }
+
+    fn handle_dom_propose(&mut self, prop: DomPropose<T>) {
+        // TODO implement DOM propose handling logic
+    }
+
+    fn handle_dom_ack(&mut self, ack: DomAck) {
+        // TODO implement DOM ack handling logic
     }
 
     /// Propose a reconfiguration. Returns an error if already stopped or `new_config` is invalid.

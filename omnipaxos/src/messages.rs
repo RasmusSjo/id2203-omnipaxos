@@ -11,11 +11,14 @@ pub mod sequence_paxos {
     use crate::{
         ballot_leader_election::Ballot,
         storage::{Entry, StopSign},
-        util::{LogSync, NodeId, SequenceNumber},
+        util::{LogSync, NodeId, SequenceNumber, UnsyncedLogEntry},
     };
     #[cfg(feature = "serde")]
     use serde::{Deserialize, Serialize};
-    use std::fmt::Debug;
+    use std::{
+        fmt::Debug,
+        collections::HashMap,
+    };
 
     /// Message sent by a follower on crash-recovery or dropped messages to request its leader to re-prepare them.
     #[derive(Copy, Clone, Debug)]
@@ -57,6 +60,8 @@ pub mod sequence_paxos {
         /// The log update which the leader applies to its log in order to sync
         /// with this follower (if the follower is more up-to-date).
         pub log_sync: Option<LogSync<T>>,
+        /// The unsynced-log entries of this follower
+        pub log_unsync: Option<HashMap<usize, UnsyncedLogEntry<T>>>,
     }
 
     /// AcceptSync message sent by the leader to synchronize the logs of all replicas in the prepare phase.

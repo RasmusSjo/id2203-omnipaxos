@@ -2,9 +2,10 @@ use super::super::{
     ballot_leader_election::Ballot,
     util::{LeaderState, PromiseMetaData},
 };
-use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG};
+use crate::util::{AcceptedMetaData, READ_ERROR_MSG, WRITE_ERROR_MSG};
 
 use super::*;
+use std::collections::{BTreeMap, HashSet};
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
@@ -108,28 +109,18 @@ where
             return;
         }
 
-        // if acceptedMap<idx> is null then initialize acceptedMap<idx>
-        // let entry = self
-        //     .leader_state
-        //     .accepted_map
-        //     .entry(fast_acc.idx)
-        //     .or_insert_with(|| AcceptedMapEntry {
-        //         entry: fast_acc.entry.clone(),
-        //         prev_hash: fast_acc.prev_hash.clone(),
-        //         fast: HashMap::new(),
-        //         slow: Set::new(),
-        //     });
-
-        // // acceptedMap<idx>.fast<(entry.prevHash, entry.entryHash)>.append(f)
-        // let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
-        // let key = (fast_acc.prev_hash.clone(), entry_hash);
-        // entry.fast.entry(key).or_insert_with(Set::new).insert(from);
         let entry = self.leader_state
-            .set_accepted_map(fast_acc.idx, fast_acc.entry.clone(), fast_acc.prev_hash.clone(), from, true);
+            .set_accepted_map(
+                fast_acc.idx, 
+                fast_acc.entry.clone(), 
+                fast_acc.prev_hash.clone(), 
+                from, 
+                true
+            );
         
         // compute quorum sizes
         let num_nodes = self.peers.len() + 1;
-        let f = (num_nodes - 1) / 2;
+        let f = num_nodes / 2;
         let fast_quorum = f + (f + 1) / 2 + 1;
         let slow_quorum = f + 1;
 
@@ -329,11 +320,6 @@ where
             msg: PaxosMsg::Decide(d),
         }));
     }
-
-    fn hash_prefix_demo(&self, idx: usize) -> Vec<u8> {
-        // Placeholder hash function, should be replaced with a proper hash function
-        idx.to_le_bytes().to_vec()
-    }
     
     // fn handle_reconstructed_fast_accepted(&mut self, accIdx: usize) {
     //     // Should integrate proper Hash function
@@ -350,7 +336,78 @@ where
             .sync_log(self.leader_state.n_leader, decided_idx, max_promise_sync)
             .expect(WRITE_ERROR_MSG);
         // Update log from unsynced log if necessary
-        // new_accepted_idx = self
+        let num_nodes = self.peers.len() + 1;
+        let f = num_nodes / 2;
+        let recover_threshold = (f + 1) / 2 + 1; // ceil(f/2) + 1
+
+        let mut expected_prev_hash = self
+            .hash_log_prefix(new_accepted_idx)
+            .expect(READ_ERROR_MSG);
+        let mut recovered_entries_set: HashSet<T> = HashSet::new();
+        let mut recovered_idx = new_accepted_idx + 1;
+        'recover: loop {
+            let entries_count = self
+                .leader_state
+                .get_matched_unsynced_entries(recovered_idx, expected_prev_hash.clone());
+            let mut winners = vec::Vec::<T>::new();
+            for (e, cnt) in entries_count {
+                if cnt >= recover_threshold {
+                    winners.push(e);
+                }
+            }
+            if winners.is_empty() {
+                break 'recover;
+            }
+            if winners.len() >= 2 {
+                // collision: multiple candidates for same idx with enough votes.
+                break 'recover;
+            }
+            let e = winners.pop().unwrap();
+            recovered_entries_set.insert(e.clone());
+            new_accepted_idx = self
+                .internal_storage
+                .append_entries_without_batching(vec![e])
+                .expect(WRITE_ERROR_MSG);
+            expected_prev_hash = self
+                .hash_log_prefix(new_accepted_idx)
+                .expect(READ_ERROR_MSG);
+            recovered_idx = new_accepted_idx + 1;
+        }
+
+        // remove entries from unsynced logs that are duplicated in synced-log
+        self.unsynced_log.retain(|idx, entry| {
+            *idx > new_accepted_idx && !recovered_entries_set.contains(&entry.entry)
+        });
+        // TODO: also remove duplicates from early/late buffers once implemented.
+
+        // append the remaining entries to the synced-log in deterministic order
+        let mut remaining: BTreeMap<(usize, u64), T> = BTreeMap::new();
+        for (idx, unsynced_entry) in &self.unsynced_log {
+            if *idx > new_accepted_idx {
+                let entry_hash = Self::entry_hash_u64(&unsynced_entry.entry);
+                remaining
+                    .entry((*idx, entry_hash))
+                    .or_insert_with(|| unsynced_entry.entry.clone());
+            }
+        }
+        for unsynced_log in self.leader_state.get_unsynced_log_store() {
+            for (idx, unsynced_entry) in unsynced_log {
+                if *idx > new_accepted_idx {
+                    let entry_hash = Self::entry_hash_u64(&unsynced_entry.entry);
+                    remaining
+                        .entry((*idx, entry_hash))
+                        .or_insert_with(|| unsynced_entry.entry.clone());
+                }
+            }
+        }
+        if !remaining.is_empty() {
+            let remaining_entries: Vec<T> = remaining.into_values().collect();
+            new_accepted_idx = self
+                .internal_storage
+                .append_entries_without_batching(remaining_entries)
+                .expect(WRITE_ERROR_MSG);
+            self.unsynced_log.retain(|idx, _| *idx > new_accepted_idx);
+        }
 
 
         if !self.accepted_reconfiguration() {

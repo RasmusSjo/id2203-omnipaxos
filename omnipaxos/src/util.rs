@@ -123,7 +123,8 @@ where
 
     // Modifications for the Project
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
-    unsynced_log_store: Vec<HashMap<usize, UnsyncedLogEntry<T>>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
+    /// unsynced_log_store\[pid\]\[idx\] = the unsynced log entry with index idx from the follower with id pid
+    unsynced_log_store: Vec<HashMap<usize, UnsyncedLogEntry<T>>>,
 }
 
 impl<T> LeaderState<T>
@@ -179,6 +180,9 @@ where
             self.max_promise_sync = prom.log_sync;
         }
         self.promises_meta[Self::pid_to_idx(from)] = PromiseState::Promised(promise_meta);
+        if let Some(unsynced_log) = prom.log_unsync {
+            self.set_unsynced_log(from, unsynced_log);
+        }
         let num_promised = self
             .promises_meta
             .iter()
@@ -307,15 +311,28 @@ where
         }
     }
 
-    pub fn count_matched_unsynced_entries(&self, entry_idx: usize, prev_hash: Hash) -> usize {
-        self.unsynced_log_store
-            .iter()
-            .filter(|unsynced_log| {
-                unsynced_log
-                    .get(&entry_idx)
-                    .map_or(false, |unsynced_entry| unsynced_entry.prev_hash == prev_hash)
-            })
-            .count()
+    pub fn get_unsynced_log_store(&self) -> &Vec<HashMap<usize, UnsyncedLogEntry<T>>> {
+        &self.unsynced_log_store
+    }
+
+    /// Returns [(entry, count), ...] for all entries in the unsynced log store with the idx = `entry_idx` and prev_hash = `prev_hash`.
+    pub fn get_matched_unsynced_entries(
+        &self,
+        entry_idx: usize,
+        prev_hash: Hash,
+    ) -> Vec<(T, usize)>
+    {
+        let mut counts: HashMap<T, usize> = HashMap::new();
+
+        for unsynced_log in &self.unsynced_log_store {
+            if let Some(unsynced_entry) = unsynced_log.get(&entry_idx) {
+                if unsynced_entry.prev_hash == prev_hash {
+                    *counts.entry(unsynced_entry.entry.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        counts.into_iter().collect()
     }
 
     pub fn set_accepted_map(&mut self, idx: usize, entry: T, prev_hash: Hash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {

@@ -1,7 +1,10 @@
 use super::state_cache::StateCache;
 use crate::{
     ballot_leader_election::Ballot,
-    storage::{Entry, Snapshot, SnapshotType, StopSign, Storage, StorageOp, StorageResult},
+    storage::{
+        Entry, Snapshot, SnapshotType, StopSign, Storage, StorageOp, StorageResult,
+        ROLLING_HASH_BASE,
+    },
     util::{AcceptedMetaData, IndexEntry, LogEntry, LogSync, SnapshottedEntry},
     CompactionErr,
 };
@@ -9,6 +12,7 @@ use crate::{
 use crate::{unicache::*, util::NodeId};
 use std::{
     cmp::Ordering,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     ops::{Bound, RangeBounds},
 };
@@ -65,12 +69,59 @@ where
             .unwrap()
             .unwrap_or_default();
         self.state_cache.compacted_idx = self.storage.get_compacted_idx().unwrap();
+        self.state_cache.prefix_hash_base = self
+            .storage
+            .get_prefix_hash_base()
+            .expect("Failed to load prefix hash from storage.")
+            .unwrap_or(0);
+        self.state_cache.prefix_pow_base = self
+            .storage
+            .get_prefix_pow_base()
+            .expect("Failed to load prefix pow from storage.")
+            .unwrap_or(1);
         self.state_cache.stopsign = self.storage.get_stopsign().unwrap();
         self.state_cache.accepted_idx =
             self.storage.get_log_len().unwrap() + self.state_cache.compacted_idx;
         if self.state_cache.stopsign.is_some() {
             self.state_cache.accepted_idx += 1;
         }
+    }
+
+    fn roll_hash_entries(entries: &[T]) -> (u64, u64) {
+        let mut hash = 0_u64;
+        let mut pow = 1_u64;
+        for entry in entries {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            entry.hash(&mut hasher);
+            let entry_hash = hasher.finish();
+            hash = hash.wrapping_add(entry_hash.wrapping_mul(pow));
+            pow = pow.wrapping_mul(ROLLING_HASH_BASE);
+        }
+        (hash, pow)
+    }
+
+    fn update_prefix_hash_base(
+        &mut self,
+        new_compacted_idx: usize,
+    ) -> StorageResult<(u64, u64)> {
+        let compacted_idx = self.get_compacted_idx();
+        if new_compacted_idx <= compacted_idx {
+            return Ok((
+                self.state_cache.prefix_hash_base,
+                self.state_cache.prefix_pow_base,
+            ));
+        }
+        let entries = self.get_entries(compacted_idx, new_compacted_idx)?;
+        let (trim_hash, trim_pow) = Self::roll_hash_entries(entries.as_slice());
+        let new_hash = self
+            .state_cache
+            .prefix_hash_base
+            .wrapping_add(self.state_cache.prefix_pow_base.wrapping_mul(trim_hash));
+        let new_pow = self
+            .state_cache
+            .prefix_pow_base
+            .wrapping_mul(trim_pow);
+        Ok((new_hash, new_pow))
     }
 
     /// Read all decided entries from `from_idx` in the log. Returns `None` if `from_idx` is out of bounds.
@@ -326,17 +377,25 @@ where
             match sync.decided_snapshot {
                 Some(SnapshotType::Complete(c)) => {
                     self.state_cache.compacted_idx = sync.sync_idx;
+                    self.state_cache.prefix_hash_base = 0;
+                    self.state_cache.prefix_pow_base = 1;
                     sync_txn.push(StorageOp::Trim(sync.sync_idx));
                     sync_txn.push(StorageOp::SetCompactedIdx(sync.sync_idx));
                     sync_txn.push(StorageOp::SetSnapshot(Some(c)));
+                    sync_txn.push(StorageOp::SetPrefixHashBase(0));
+                    sync_txn.push(StorageOp::SetPrefixPowBase(1));
                 }
                 Some(SnapshotType::Delta(d)) => {
                     let mut snapshot = self.create_decided_snapshot()?;
                     snapshot.merge(d);
                     self.state_cache.compacted_idx = sync.sync_idx;
+                    self.state_cache.prefix_hash_base = 0;
+                    self.state_cache.prefix_pow_base = 1;
                     sync_txn.push(StorageOp::Trim(sync.sync_idx));
                     sync_txn.push(StorageOp::SetCompactedIdx(sync.sync_idx));
                     sync_txn.push(StorageOp::SetSnapshot(Some(snapshot)));
+                    sync_txn.push(StorageOp::SetPrefixHashBase(0));
+                    sync_txn.push(StorageOp::SetPrefixPowBase(1));
                 }
                 None => (),
             }
@@ -420,11 +479,16 @@ where
             Ordering::Greater => Err(CompactionErr::UndecidedIndex(decided_idx))?,
         };
         if new_compacted_idx > self.get_compacted_idx() {
+            let (new_hash, new_pow) = self.update_prefix_hash_base(new_compacted_idx)?;
             self.storage.write_atomically(vec![
                 StorageOp::Trim(new_compacted_idx),
                 StorageOp::SetCompactedIdx(new_compacted_idx),
+                StorageOp::SetPrefixHashBase(new_hash),
+                StorageOp::SetPrefixPowBase(new_pow),
             ])?;
             self.state_cache.compacted_idx = new_compacted_idx;
+            self.state_cache.prefix_hash_base = new_hash;
+            self.state_cache.prefix_pow_base = new_pow;
         }
         Ok(())
     }
@@ -441,13 +505,18 @@ where
             None => log_decided_idx,
         };
         if new_compacted_idx > self.get_compacted_idx() {
+            let (new_hash, new_pow) = self.update_prefix_hash_base(new_compacted_idx)?;
             let snapshot = self.create_snapshot(new_compacted_idx)?;
             self.storage.write_atomically(vec![
                 StorageOp::Trim(new_compacted_idx),
                 StorageOp::SetCompactedIdx(new_compacted_idx),
                 StorageOp::SetSnapshot(Some(snapshot)),
+                StorageOp::SetPrefixHashBase(new_hash),
+                StorageOp::SetPrefixPowBase(new_pow),
             ])?;
             self.state_cache.compacted_idx = new_compacted_idx;
+            self.state_cache.prefix_hash_base = new_hash;
+            self.state_cache.prefix_pow_base = new_pow;
         }
         Ok(())
     }
@@ -520,6 +589,14 @@ where
 
     pub(crate) fn get_compacted_idx(&self) -> usize {
         self.state_cache.compacted_idx
+    }
+
+    pub(crate) fn get_prefix_hash_base(&self) -> u64 {
+        self.state_cache.prefix_hash_base
+    }
+
+    pub(crate) fn get_prefix_pow_base(&self) -> u64 {
+        self.state_cache.prefix_pow_base
     }
 
     #[cfg(feature = "unicache")]

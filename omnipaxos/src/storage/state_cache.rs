@@ -25,6 +25,10 @@ where
     pub accepted_idx: usize,
     /// Garbage collected index.
     pub compacted_idx: usize,
+    /// Hash of the log prefix up to compacted_idx.
+    pub prefix_hash_base: u64,
+    /// Rolling hash base power for compacted_idx (base^compacted_idx).
+    pub prefix_pow_base: u64,
     /// Stopsign entry.
     pub stopsign: Option<StopSign>,
     #[cfg(feature = "unicache")]
@@ -52,6 +56,8 @@ where
             decided_idx: 0,
             accepted_idx: 0,
             compacted_idx: 0,
+            prefix_hash_base: 0,
+            prefix_pow_base: 1,
             stopsign: None,
             #[cfg(feature = "unicache")]
             batched_processed_by_leader: Vec::with_capacity(config.batch_size),

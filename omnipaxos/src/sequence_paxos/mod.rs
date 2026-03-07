@@ -5,17 +5,27 @@ use crate::{
     messages::Message,
     storage::{
         internal_storage::{InternalStorage, InternalStorageConfig},
-        Entry, Snapshot, StopSign, Storage,
+        Entry, Snapshot, StopSign, Storage, StorageResult, ROLLING_HASH_BASE,
     },
     util::{
-        FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber, READ_ERROR_MSG,
+        FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
+        UnsyncedLogEntry,
+        READ_ERROR_MSG,
         WRITE_ERROR_MSG,
     },
+    
     ClusterConfig, CompactionErr, OmniPaxosConfig, ProposeErr,
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
+use std::{
+    collections::HashMap,
+    collections::HashSet as Set, 
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    fmt::Debug,
+    vec
+};
 
 pub mod follower;
 pub mod leader;
@@ -42,20 +52,9 @@ where
     // Keeps track of sequence of accepts from leader where AcceptSync = 1
     current_seq_num: SequenceNumber,
     cached_promise_message: Option<Promise<T>>,
-    // Project paxos modifications:
-    accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
-    unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
-    unsynced_log: HashMap<usize, T>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
+    unsynced_log: HashMap<usize, UnsyncedLogEntry<T>>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     #[cfg(feature = "logging")]
     logger: Logger,
-}
-
-type Hash = Vec<u8>;
-struct AcceptedMapEntry<T: Entry> {
-    entry: T,
-    prev_hash: Hash,
-    fast: HashMap<(Hash, Hash), Set<NodeId>>,
-    slow: Set<NodeId>,
 }
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
@@ -114,8 +113,6 @@ where
             latest_accepted_meta: None,
             current_seq_num: SequenceNumber::default(),
             cached_promise_message: None,
-            accepted_map: HashMap::new(),
-            unsynced_log_store: vec![],
             unsynced_log: HashMap::new(),
             #[cfg(feature = "logging")]
             logger: {
@@ -234,6 +231,72 @@ where
         self.internal_storage.get_compacted_idx()
     }
 
+    fn entry_hash_u64(entry: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        entry.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn roll_hash_iter<'b, I>(iter: I) -> (u64, u64, usize)
+    where
+        I: IntoIterator<Item = &'b T>,
+        T: 'b,
+    {
+        let mut hash = 0_u64;
+        let mut pow = 1_u64;
+        let mut len = 0_usize;
+        for entry in iter {
+            let entry_hash = Self::entry_hash_u64(entry);
+            hash = hash.wrapping_add(entry_hash.wrapping_mul(pow));
+            pow = pow.wrapping_mul(ROLLING_HASH_BASE);
+            len += 1;
+        }
+        (hash, pow, len)
+    }
+
+    fn hash_log_prefix(&self, prefix_len: usize) -> StorageResult<Vec<u8>> {
+        let compacted_idx = self.internal_storage.get_compacted_idx();
+        let base_hash = self.internal_storage.get_prefix_hash_base();
+        let base_pow = self.internal_storage.get_prefix_pow_base();
+        if prefix_len <= compacted_idx {
+            return Ok(base_hash.to_le_bytes().to_vec());
+        }
+        let entries = self
+            .internal_storage
+            .get_entries(compacted_idx, prefix_len)?;
+        let (seg_hash, _, _) = Self::roll_hash_iter(entries.iter());
+        let hash = base_hash.wrapping_add(base_pow.wrapping_mul(seg_hash));
+        Ok(hash.to_le_bytes().to_vec())
+    }
+
+    fn hash_log_and_unsynced_prefix(&self, unsynced_prefix_len: usize) -> StorageResult<Vec<u8>> {
+        let compacted_idx = self.internal_storage.get_compacted_idx();
+        let accepted_idx = self.internal_storage.get_accepted_idx();
+        let base_hash = self.internal_storage.get_prefix_hash_base();
+        let base_pow = self.internal_storage.get_prefix_pow_base();
+        let mut seg_hash = 0_u64;
+        let mut pow = 1_u64;
+        if accepted_idx > compacted_idx {
+            let entries = self
+                .internal_storage
+                .get_entries(compacted_idx, accepted_idx)?;
+            let (log_hash, log_pow, _) = Self::roll_hash_iter(entries.iter());
+            seg_hash = log_hash;
+            pow = log_pow;
+        }
+        let mut keys: Vec<usize> = self.unsynced_log.keys().cloned().collect();
+        keys.sort_unstable();
+        for idx in keys.into_iter().take(unsynced_prefix_len) {
+            if let Some(unsynced) = self.unsynced_log.get(&idx) {
+                let entry_hash = Self::entry_hash_u64(&unsynced.entry);
+                seg_hash = seg_hash.wrapping_add(entry_hash.wrapping_mul(pow));
+                pow = pow.wrapping_mul(ROLLING_HASH_BASE);
+            }
+        }
+        let hash = base_hash.wrapping_add(base_pow.wrapping_mul(seg_hash));
+        Ok(hash.to_le_bytes().to_vec())
+    }
+
     fn handle_compaction(&mut self, c: Compaction) {
         // try trimming and snapshotting forwarded compaction. Errors are ignored as that the data will still be kept.
         match c {
@@ -253,24 +316,31 @@ where
         match self.state {
             // Leader case: append to synced-log and send Accept to followers
             (Role::Leader, Phase::Accept) => {
+                // I think we need to initialize the accepted map for this entry here
+                //
+                // prevHash = Hash(synced-log)
+                // This hashing only uses the length of the logs instead of the content.
+                // We need to replace it with a more safe hashing that also takes into account the content of the logs 
+                let prev_hash = self
+                    .hash_log_prefix(self.internal_storage.get_accepted_idx())
+                    .expect(READ_ERROR_MSG);
+                self.leader_state.set_accepted_map(self.leader_state.get_accepted_idx(self.pid), entry.clone(), prev_hash.clone(), self.pid, false);
                 self.accept_entry_leader(entry);
             }
             // Follower case: append to unsynced-log and send FastAccepted to leader
             (Role::Follower, Phase::Accept) => {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
-
                 // idx = |synced-log| + |unsynced-log| + 1
                 let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
 
                 // prevHash = Hash(synced-log + unsynced-log)
-                let mut hasher = DefaultHasher::new();
-                self.internal_storage.get_accepted_idx().hash(&mut hasher);
-                self.unsynced_log.len().hash(&mut hasher);
-                let prev_hash = hasher.finish().to_le_bytes().to_vec();
+                // This hashing only uses the length of the logs instead of the content.
+                // We need to replace it with a more safe hashing that also takes into account the content of the logs 
+                let prev_hash = self
+                    .hash_log_and_unsynced_prefix(self.unsynced_log.len())
+                    .expect(READ_ERROR_MSG);
 
                 // unsynced-log.append(entry)
-                self.unsynced_log.insert(idx, entry.clone());
+                self.unsynced_log.insert(idx, UnsyncedLogEntry { entry: entry.clone(), prev_hash: prev_hash.clone() });
 
                 // send <FastAccepted, promisedRnd, idx, entry>
                 self.outgoing.push(Message::SequencePaxos(PaxosMessage {

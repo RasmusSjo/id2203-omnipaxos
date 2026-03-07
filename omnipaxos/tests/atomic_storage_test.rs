@@ -131,6 +131,7 @@ fn _setup_leader() -> (
             accepted_idx: 0,
             n_accepted: n_old,
             log_sync: None,
+            log_unsync: None,
         }),
     });
     op.handle_incoming(setup_msg);
@@ -562,6 +563,7 @@ fn atomic_storage_majority_promises_test() {
                     sync_idx: 2,
                     stopsign: None,
                 }),
+                log_unsync: None,
             }),
         });
         let _res = catch_unwind(AssertUnwindSafe(|| op.handle_incoming(msg.clone())));

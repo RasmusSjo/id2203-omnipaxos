@@ -470,6 +470,50 @@ where
             }
         }
     }
+
+    fn set_prefix_hash_base(&mut self, hash: u64) -> StorageResult<()> {
+        match self {
+            StorageType::Persistent(persist_s) => persist_s.set_prefix_hash_base(hash),
+            StorageType::Memory(mem_s) => mem_s.set_prefix_hash_base(hash),
+            StorageType::Broken(mem_s, conf) => {
+                conf.lock().unwrap().tick()?;
+                mem_s.lock().unwrap().set_prefix_hash_base(hash)
+            }
+        }
+    }
+
+    fn get_prefix_hash_base(&self) -> StorageResult<Option<u64>> {
+        match self {
+            StorageType::Persistent(persist_s) => persist_s.get_prefix_hash_base(),
+            StorageType::Memory(mem_s) => mem_s.get_prefix_hash_base(),
+            StorageType::Broken(mem_s, conf) => {
+                conf.lock().unwrap().tick()?;
+                mem_s.lock().unwrap().get_prefix_hash_base()
+            }
+        }
+    }
+
+    fn set_prefix_pow_base(&mut self, pow: u64) -> StorageResult<()> {
+        match self {
+            StorageType::Persistent(persist_s) => persist_s.set_prefix_pow_base(pow),
+            StorageType::Memory(mem_s) => mem_s.set_prefix_pow_base(pow),
+            StorageType::Broken(mem_s, conf) => {
+                conf.lock().unwrap().tick()?;
+                mem_s.lock().unwrap().set_prefix_pow_base(pow)
+            }
+        }
+    }
+
+    fn get_prefix_pow_base(&self) -> StorageResult<Option<u64>> {
+        match self {
+            StorageType::Persistent(persist_s) => persist_s.get_prefix_pow_base(),
+            StorageType::Memory(mem_s) => mem_s.get_prefix_pow_base(),
+            StorageType::Broken(mem_s, conf) => {
+                conf.lock().unwrap().tick()?;
+                mem_s.lock().unwrap().get_prefix_pow_base()
+            }
+        }
+    }
 }
 
 pub struct TestSystem {

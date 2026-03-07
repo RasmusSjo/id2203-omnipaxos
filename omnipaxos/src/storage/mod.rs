@@ -13,6 +13,8 @@ use std::{
     hash::{Hash}
 };
 
+pub(crate) const ROLLING_HASH_BASE: u64 = 1_000_000_007;
+
 #[derive(Debug)]
 struct UnsupportedStorageOp {
     name: &'static str,
@@ -141,6 +143,10 @@ pub enum StorageOp<T: Entry> {
     SetStopsign(Option<StopSign>),
     /// Sets the snapshot.
     SetSnapshot(Option<T::Snapshot>),
+    /// Sets the prefix hash base (hash of log up to compacted_idx).
+    SetPrefixHashBase(u64),
+    /// Sets the prefix power base (base^compacted_idx).
+    SetPrefixPowBase(u64),
 }
 
 /// Trait for implementing the storage backend of Sequence Paxos.
@@ -214,6 +220,18 @@ where
 
     /// Returns the stored snapshot.
     fn get_snapshot(&self) -> StorageResult<Option<T::Snapshot>>;
+
+    /// Sets the prefix hash base (hash of log up to compacted_idx).
+    fn set_prefix_hash_base(&mut self, hash: u64) -> StorageResult<()>;
+
+    /// Returns the stored prefix hash base.
+    fn get_prefix_hash_base(&self) -> StorageResult<Option<u64>>;
+
+    /// Sets the prefix power base (base^compacted_idx).
+    fn set_prefix_pow_base(&mut self, pow: u64) -> StorageResult<()>;
+
+    /// Returns the stored prefix power base.
+    fn get_prefix_pow_base(&self) -> StorageResult<Option<u64>>;
 }
 
 /// A place holder type for when not using snapshots. You should not use this type, it is only internally when deriving the Entry implementation.

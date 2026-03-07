@@ -41,6 +41,7 @@ where
                 decided_idx: self.internal_storage.get_decided_idx(),
                 accepted_idx,
                 log_sync,
+                log_unsync: Some(self.unsynced_log.clone()),
             };
             self.cached_promise_message = Some(promise.clone());
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {

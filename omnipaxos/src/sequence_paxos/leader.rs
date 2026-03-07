@@ -37,8 +37,10 @@ where
                 decided_idx,
                 accepted_idx,
                 log_sync: None,
+                log_unsync: Some(self.unsynced_log.clone()),
             };
             self.leader_state.set_promise(my_promise, self.pid, true);
+            self.leader_state.set_unsynced_log(self.pid, self.unsynced_log.clone());
             /* initialise longest chosen sequence and update state */
             self.state = (Role::Leader, Phase::Prepare);
             let prep = Prepare {
@@ -107,21 +109,24 @@ where
         }
 
         // if acceptedMap<idx> is null then initialize acceptedMap<idx>
-        let entry = self
-            .accepted_map
-            .entry(fast_acc.idx)
-            .or_insert_with(|| AcceptedMapEntry {
-                entry: fast_acc.entry.clone(),
-                prev_hash: fast_acc.prev_hash.clone(),
-                fast: HashMap::new(),
-                slow: Set::new(),
-            });
+        // let entry = self
+        //     .leader_state
+        //     .accepted_map
+        //     .entry(fast_acc.idx)
+        //     .or_insert_with(|| AcceptedMapEntry {
+        //         entry: fast_acc.entry.clone(),
+        //         prev_hash: fast_acc.prev_hash.clone(),
+        //         fast: HashMap::new(),
+        //         slow: Set::new(),
+        //     });
 
-        // acceptedMap<idx>.fast<(entry.prevHash, entry.entryHash)>.append(f)
-        let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
-        let key = (fast_acc.prev_hash.clone(), entry_hash);
-        entry.fast.entry(key).or_insert_with(Set::new).insert(from);
-
+        // // acceptedMap<idx>.fast<(entry.prevHash, entry.entryHash)>.append(f)
+        // let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
+        // let key = (fast_acc.prev_hash.clone(), entry_hash);
+        // entry.fast.entry(key).or_insert_with(Set::new).insert(from);
+        let entry = self.leader_state
+            .set_accepted_map(fast_acc.idx, fast_acc.entry.clone(), fast_acc.prev_hash.clone(), from, true);
+        
         // compute quorum sizes
         let num_nodes = self.peers.len() + 1;
         let f = (num_nodes - 1) / 2;
@@ -325,13 +330,29 @@ where
         }));
     }
 
+    fn hash_prefix_demo(&self, idx: usize) -> Vec<u8> {
+        // Placeholder hash function, should be replaced with a proper hash function
+        idx.to_le_bytes().to_vec()
+    }
+    
+    // fn handle_reconstructed_fast_accepted(&mut self, accIdx: usize) {
+    //     // Should integrate proper Hash function
+    //     let mut expected_prev_hash = self.hash_prefix_demo(accIdx);
+    //     let mut currIdx = accIdx;
+        
+    // }
     fn handle_majority_promises(&mut self) {
         let max_promise_sync = self.leader_state.take_max_promise_sync();
         let decided_idx = self.leader_state.get_max_decided_idx();
+        // Update log and accepted_idx according to the highest accepted_idx among promises
         let mut new_accepted_idx = self
             .internal_storage
             .sync_log(self.leader_state.n_leader, decided_idx, max_promise_sync)
             .expect(WRITE_ERROR_MSG);
+        // Update log from unsynced log if necessary
+        // new_accepted_idx = self
+
+
         if !self.accepted_reconfiguration() {
             if !self.buffered_proposals.is_empty() {
                 let entries = std::mem::take(&mut self.buffered_proposals);

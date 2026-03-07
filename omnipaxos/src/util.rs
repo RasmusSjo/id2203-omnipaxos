@@ -10,6 +10,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
+    collections::{HashMap, HashSet},
 };
 
 /// Struct used to help another server synchronize their log with the current state of our own log.
@@ -27,6 +28,33 @@ where
     pub sync_idx: usize,
     /// The accepted StopSign.
     pub stopsign: Option<StopSign>,
+}
+
+/// Struct used to unsyced-log entries
+type Hash = Vec<u8>;
+#[derive(Clone, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Struct used to keep track of unsynced log entries for the Project.
+pub struct UnsyncedLogEntry<T: Entry> {
+    /// The entry which was sent on the fast path and is not yet synced.
+    pub entry: T,
+    /// The hash of the prefix of the log up to this entry, used for checking if the entry is on the same log as other entries with the same index.
+    pub prev_hash: Hash,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Struct used to keep track of each entry's fast and slow path acceptors for the Project.
+pub struct AcceptedMapEntry<T: Entry> {
+    /// The entry which waits to be accepted on the fast path or the slow path.
+    pub entry: T,
+    /// The hash of the prefix of the leader's log up to this entry, used for checking if the fast path accepted entry is on the same log as other entries with the same index.
+    pub prev_hash: Hash,
+    /// The set of followers which accepted this entry on the fast path
+    /// The key of the map is a tuple of (prev_hash, entry_hash) where prev_hash is the hash of the prefix of the follower's log up to this entry and entry_hash is the hash of the entry itself.
+    pub fast: HashMap<(Hash, Hash), HashSet<NodeId>>,
+    /// The set of followers which accepted this entry on the slow path
+    pub slow: HashSet<NodeId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +120,10 @@ where
     // The number of promises needed in the prepare phase to become synced and
     // the number of accepteds needed in the accept phase to decide an entry.
     pub quorum: Quorum,
+
+    // Modifications for the Project
+    accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
+    unsynced_log_store: Vec<HashMap<usize, UnsyncedLogEntry<T>>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
 }
 
 impl<T> LeaderState<T>
@@ -109,6 +141,8 @@ where
             latest_accept_meta: vec![None; max_pid],
             max_pid,
             quorum,
+            accepted_map: HashMap::new(),
+            unsynced_log_store: vec![HashMap::new(); max_pid],
         }
     }
 
@@ -261,6 +295,47 @@ where
             .filter(|la| **la >= idx)
             .count();
         self.quorum.is_accept_quorum(num_accepted)
+    }
+
+    pub fn set_unsynced_log(&mut self, pid: NodeId, unsynced_log:HashMap<usize, UnsyncedLogEntry<T>>) {
+        let id = Self::pid_to_idx(pid);
+        if id < self.unsynced_log_store.len() {
+            self.unsynced_log_store[id] = unsynced_log;
+        } else {
+            // If idx is out of bounds, we can choose to either ignore it or handle it as needed.
+            // For now, we'll just ignore it.
+        }
+    }
+
+    pub fn count_matched_unsynced_entries(&self, entry_idx: usize, prev_hash: Hash) -> usize {
+        self.unsynced_log_store
+            .iter()
+            .filter(|unsynced_log| {
+                unsynced_log
+                    .get(&entry_idx)
+                    .map_or(false, |unsynced_entry| unsynced_entry.prev_hash == prev_hash)
+            })
+            .count()
+    }
+
+    pub fn set_accepted_map(&mut self, idx: usize, entry: T, prev_hash: Hash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {
+        let accepted_entry = self.accepted_map.entry(idx).or_insert_with(|| AcceptedMapEntry {
+            entry,
+            prev_hash: prev_hash.clone(),
+            fast: HashMap::new(),
+            slow: HashSet::new(),
+        });
+
+        if is_fast_path {
+            accepted_entry
+                .fast
+                .entry((prev_hash, accepted_entry.prev_hash.clone()))
+                .or_insert_with(HashSet::new)
+                .insert(pid);
+        } else {
+            accepted_entry.slow.insert(pid);
+        }
+        accepted_entry.clone()
     }
 }
 

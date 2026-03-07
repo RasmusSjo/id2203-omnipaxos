@@ -110,6 +110,8 @@ where
         }
     }
 
+    pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
+
     pub(crate) fn handle_accept_stopsign(&mut self, acc_ss: AcceptStopSign) {
         if self.check_valid_ballot(acc_ss.n)
             && self.state == (Role::Follower, Phase::Accept)

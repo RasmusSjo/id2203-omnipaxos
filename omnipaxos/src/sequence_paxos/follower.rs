@@ -70,6 +70,7 @@ where
             self.current_seq_num = accsync.seq_num;
             let cached_idx = self.outgoing.len();
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
+            self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
                 to: from,

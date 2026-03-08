@@ -15,7 +15,7 @@ use crate::{
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{fmt::Debug, vec, collections::HashMap, collections::HashSet as Set};
+use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
 
 pub mod follower;
 pub mod leader;
@@ -47,6 +47,7 @@ where
     unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
     synced_hash: Hash,
     unsyched_hash: Hash, // for efficient hashing in slow-path
+    unsynced_log: HashMap<usize, T>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     #[cfg(feature = "logging")]
     logger: Logger,
 }
@@ -119,6 +120,7 @@ where
             unsynced_log_store: vec![],
             synced_hash: vec![],
             unsyched_hash: vec![],
+            unsynced_log: HashMap::new(),
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {
@@ -248,6 +250,48 @@ where
         }
     }
 
+    //This might be in the wrong place because the algorithm PDF says it goes on the follower side,
+    //right after DOM-R, but if both followers and leaders have DOM-R, then it goes in mod.rs.
+    //If it's wrong, I'll move it in a moment.
+    pub(crate) fn handle_dom_release(&mut self, entry: T, leader: NodeId) {
+        match self.state {
+            // Leader case: append to synced-log and send Accept to followers
+            (Role::Leader, Phase::Accept) => {
+                self.accept_entry_leader(entry);
+            }
+            // Follower case: append to unsynced-log and send FastAccepted to leader
+            (Role::Follower, Phase::Accept) => {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+
+                // idx = |synced-log| + |unsynced-log| + 1
+                let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
+
+                // prevHash = Hash(synced-log + unsynced-log)
+                let mut hasher = DefaultHasher::new();
+                self.internal_storage.get_accepted_idx().hash(&mut hasher);
+                self.unsynced_log.len().hash(&mut hasher);
+                let prev_hash = hasher.finish().to_le_bytes().to_vec();
+
+                // unsynced-log.append(entry)
+                self.unsynced_log.insert(idx, entry.clone());
+
+                // send <FastAccepted, promisedRnd, idx, entry>
+                self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+                    from: self.pid,
+                    to: leader,
+                    msg: PaxosMsg::FastAccepted(FastAccepted {
+                        n: self.internal_storage.get_promise(),
+                        idx,
+                        entry,
+                        prev_hash,
+                    }),
+                }));
+            }
+            _ => (),
+        }
+    }
+
     /// Detects if a Prepare, Promise, AcceptStopSign, Decide of a Stopsign, or PrepareReq message
     /// has been sent but not been received. If so resends them. Note: We can't detect if a
     /// StopSign's Decide message has been received so we always resend to be safe.
@@ -293,8 +337,10 @@ where
             },
             PaxosMsg::AcceptSync(acc_sync) => self.handle_acceptsync(acc_sync, m.from),
             PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
+            PaxosMsg::FastAccept(acc) => self.handle_fastaccept(acc),
             PaxosMsg::NotAccepted(not_acc) => self.handle_notaccepted(not_acc, m.from),
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
+            PaxosMsg::FastAccepted(fast_acc) => self.handle_fast_accepted(fast_acc, m.from),
             PaxosMsg::Decide(d) => self.handle_decide(d),
             PaxosMsg::ProposalForward(proposals) => self.handle_forwarded_proposal(proposals),
             PaxosMsg::Compaction(c) => self.handle_compaction(c),
@@ -510,4 +556,3 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             custom_logger: config.server_config.custom_logger,
         }
     }
-}

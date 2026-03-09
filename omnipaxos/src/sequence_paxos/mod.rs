@@ -164,6 +164,15 @@ where
         paxos
     }
 
+    pub(crate) fn tick(&mut self) {
+        let proposals = &self.dom.release_ready();
+        let entries: Vec<T> = proposals.iter().map(|p| p.entry.clone()).collect();
+
+        for entry in entries {
+            self.handle_dom_release(entry, self.get_current_leader());
+        }
+    }
+
     pub(crate) fn get_state(&self) -> &(Role, Phase) {
         &self.state
     }

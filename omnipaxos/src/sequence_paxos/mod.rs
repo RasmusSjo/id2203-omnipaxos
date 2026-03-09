@@ -46,6 +46,8 @@ where
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
     unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
     unsynced_log: HashMap<usize, T>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
+    fast_path_decisions: u64,        //benchmark
+    slow_path_decisions: u64,        //benchmark
     #[cfg(feature = "logging")]
     logger: Logger,
 }
@@ -117,6 +119,8 @@ where
             accepted_map: HashMap::new(),
             unsynced_log_store: vec![],
             unsynced_log: HashMap::new(),
+            fast_path_decisions: 0, //benchmark
+            slow_path_decisions: 0, //benchmark
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {
@@ -149,6 +153,11 @@ where
 
     pub(crate) fn get_state(&self) -> &(Role, Phase) {
         &self.state
+    }
+
+    //benchmark
+    pub(crate) fn get_fast_path_ratio(&self) -> (u64, u64) {
+        (self.fast_path_decisions, self.slow_path_decisions)
     }
 
     pub(crate) fn get_promise(&self) -> Ballot {

@@ -142,8 +142,8 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
-
-            //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
+            self.fast_path_decisions += 1; // benchmark
+                                           //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
             }
@@ -158,7 +158,8 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
-            // send <Decide, currentRnd, decidedIdx> to all followers in promises{}
+            self.fast_path_decisions += 1; // benchmark
+                                           // send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
             }
@@ -404,6 +405,7 @@ where
                 self.internal_storage
                     .set_decided_idx(decided_idx)
                     .expect(WRITE_ERROR_MSG);
+                self.slow_path_decisions += 1; // benchmark
                 for pid in self.leader_state.get_promised_followers() {
                     let latest_accdec = self.get_latest_accdec_message(pid);
                     match latest_accdec {

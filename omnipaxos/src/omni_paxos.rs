@@ -279,6 +279,11 @@ where
         self.seq_paxos.get_compacted_idx()
     }
 
+    ///benchmark
+    pub fn get_fast_path_ratio(&self) -> (u64, u64) {
+        self.seq_paxos.get_fast_path_ratio()
+    }
+
     /// Returns the ID of the current leader and whether the node's `Phase` is `Phase::Accepted`.
     ///
     /// If the node's phase is `Phase::Accepted`, this implies that the returned leader is also

@@ -53,6 +53,14 @@ where
 }
 
 type Hash = Vec<u8>;
+fn hash_entry(entry_id: EntryId, sender: NodeId, deadline: i64) -> Hash {
+    vec![]
+}
+
+fn extend_hash(prev_hash: Vec<Hash>, entry_hash: Hash) -> Vec<Hash> {
+    prev_hash
+}
+
 struct AcceptedMapEntry<T: Entry> {
     entry: T,
     prev_hash: Hash,

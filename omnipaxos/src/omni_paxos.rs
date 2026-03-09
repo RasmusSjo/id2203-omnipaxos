@@ -23,6 +23,7 @@ use std::{
 };
 #[cfg(feature = "toml_config")]
 use toml;
+use crate::messages::sequence_paxos::EntryId;
 
 /// Configuration for `OmniPaxos`.
 /// # Fields
@@ -354,6 +355,11 @@ where
     /// Append an entry to the replicated log.
     pub fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
         self.seq_paxos.append(entry)
+    }
+
+    /// Append an entry with an id to the replicated log
+    pub fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
+        self.seq_paxos.append_with_id(entry, entry_id)
     }
 
     /// Propose a cluster reconfiguration. Returns an error if the current configuration has already been stopped

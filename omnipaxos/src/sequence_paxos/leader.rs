@@ -118,8 +118,9 @@ where
             });
 
         // acceptedMap<idx>.fast<(entry.prevHash, entry.entryHash)>.append(f)
-        let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
-        let key = (fast_acc.prev_hash.clone(), entry_hash);
+        //let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
+        //let key = (fast_acc.prev_hash.clone(), entry_hash);
+        let key = (fast_acc.prev_hash.clone(), fast_acc.entry_hash.clone());
         entry.fast.entry(key).or_insert_with(Set::new).insert(from);
 
         // compute quorum sizes

@@ -1,6 +1,6 @@
 use super::{
     ballot_leader_election::Ballot,
-    messages::sequence_paxos::Promise,
+    messages::sequence_paxos::{Promise, EntryId},
     storage::{Entry, SnapshotType, StopSign},
 };
 #[cfg(feature = "serde")]
@@ -10,7 +10,48 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
+    hash::{Hash, Hasher, DefaultHasher},
 };
+
+/// Struct for implementing hashes.
+///
+/// It is possible to create a default hash with value 0, or using a (entry_id, deadline) pair, and
+/// to then extend an existing hash using another existing hash. They should also be comparable.
+///
+/// The extension uses xor (as in Nezha), it might be important to remember that this makes it
+/// commutative. For the applications is should not matter however, the only case where an entry might
+/// be out of order is if the leader adds it late, in which case the deadline should have been changed.
+///
+/// I'm sure that there are a thousand and one issues with the implementation, but hopefully it
+/// works for the required circumstances.
+#[derive(Clone, Copy, Debug, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DOMHash {
+    hash: u64,
+}
+
+impl DOMHash {
+    pub(crate) fn with(entry_id: EntryId, deadline: i64) -> Self {
+        let tuple = (entry_id, deadline);
+        let mut hasher = DefaultHasher::new();
+        tuple.hash(&mut hasher);
+        Self {
+            hash: hasher.finish()
+        }
+    }
+
+    pub(crate) fn extend_hash(&mut self, other: &Self) {
+        self.hash ^= other.hash;
+    }
+}
+
+impl PartialEq for DOMHash {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for DOMHash {}
 
 /// Struct used to help another server synchronize their log with the current state of our own log.
 #[derive(Clone, Debug)]

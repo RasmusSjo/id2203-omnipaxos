@@ -3,6 +3,7 @@ use crate::{
     storage::Entry,
     util::NodeId,
 };
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +12,7 @@ pub mod sequence_paxos {
     use crate::{
         ballot_leader_election::Ballot,
         storage::{Entry, StopSign},
-        util::{LogSync, NodeId, SequenceNumber},
+        util::{LogSync, NodeId, SequenceNumber, DOMHash},
     };
     #[cfg(feature = "serde")]
     use serde::{Deserialize, Serialize};
@@ -146,8 +147,10 @@ pub mod sequence_paxos {
         pub idx: usize,
         /// The entry the follower accepted optimistically.
         pub entry: T,
+        /// Hash of the current entry
+        pub entry_hash: DOMHash,
         /// Hash of the follower's log prefix before this entry.
-        pub prev_hash: Vec<u8>,
+        pub prev_hash: DOMHash,
     }
 
     /// Message sent by leader to followers to decide up to a certain index in the log.

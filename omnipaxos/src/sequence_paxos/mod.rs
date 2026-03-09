@@ -9,13 +9,17 @@ use crate::{
     },
     util::{
         FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber, READ_ERROR_MSG,
-        WRITE_ERROR_MSG,
+        WRITE_ERROR_MSG, DOMHash,
     },
     ClusterConfig, CompactionErr, OmniPaxosConfig, ProposeErr,
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
+use std::{
+    collections::HashMap, 
+    collections::HashSet as Set, 
+    fmt::Debug, vec,
+};
 use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
 
 pub mod follower;
@@ -47,26 +51,17 @@ where
     // Project paxos modifications:
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
     unsynced_log_store: Vec<HashMap<usize, T>>, // store unsynced logs in prepare phase, might be HashMap or other structure for better performance
-    synced_hash: Hash,
-    unsyched_hash: Hash, // for efficient hashing in slow-path
+    synced_hash: DOMHash,
+    unsynced_hash: DOMHash, // for efficient hashing in slow-path
     unsynced_log: HashMap<usize, T>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     #[cfg(feature = "logging")]
     logger: Logger,
 }
 
-type Hash = Vec<u8>;
-fn hash_entry(entry_id: EntryId, sender: NodeId, deadline: i64) -> Hash {
-    vec![]
-}
-
-fn extend_hash(prev_hash: Vec<Hash>, entry_hash: Hash) -> Vec<Hash> {
-    prev_hash
-}
-
 struct AcceptedMapEntry<T: Entry> {
     entry: T,
-    prev_hash: Hash,
-    fast: HashMap<(Hash, Hash), Set<NodeId>>,
+    prev_hash: DOMHash,
+    fast: HashMap<(DOMHash, DOMHash), Set<NodeId>>,
     slow: Set<NodeId>,
 }
 
@@ -135,8 +130,8 @@ where
             cached_promise_message: None,
             accepted_map: HashMap::new(),
             unsynced_log_store: vec![],
-            synced_hash: vec![],
-            unsyched_hash: vec![],
+            synced_hash: DOMHash::default(),
+            unsynced_hash: DOMHash::default(),
             unsynced_log: HashMap::new(),
             #[cfg(feature = "logging")]
             logger: {
@@ -270,28 +265,28 @@ where
     //This might be in the wrong place because the algorithm PDF says it goes on the follower side,
     //right after DOM-R, but if both followers and leaders have DOM-R, then it goes in mod.rs.
     //If it's wrong, I'll move it in a moment.
-    pub(crate) fn handle_dom_release(&mut self, entry: T, leader: NodeId) {
+    pub(crate) fn handle_dom_release(&mut self, prop: DomPropose<T>) {
         match self.state {
             // Leader case: append to synced-log and send Accept to followers
             (Role::Leader, Phase::Accept) => {
-                self.accept_entry_leader(entry);
+                self.accept_entry_leader(prop.entry);
             }
             // Follower case: append to unsynced-log and send FastAccepted to leader
             (Role::Follower, Phase::Accept) => {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
+                let leader = self.get_current_leader();
 
                 // idx = |synced-log| + |unsynced-log| + 1
                 let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
 
                 // prevHash = Hash(synced-log + unsynced-log)
-                let mut hasher = DefaultHasher::new();
-                self.internal_storage.get_accepted_idx().hash(&mut hasher);
-                self.unsynced_log.len().hash(&mut hasher);
-                let prev_hash = hasher.finish().to_le_bytes().to_vec();
+                // let mut hasher = DefaultHasher::new();
+                // self.internal_storage.get_accepted_idx().hash(&mut hasher);
+                // self.unsynced_log.len().hash(&mut hasher);
+                // let prev_hash = hasher.finish().to_le_bytes().to_vec();
+                let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
 
                 // unsynced-log.append(entry)
-                self.unsynced_log.insert(idx, entry.clone());
+                self.unsynced_log.insert(idx, prop.entry.clone());
 
                 // send <FastAccepted, promisedRnd, idx, entry>
                 self.outgoing.push(Message::SequencePaxos(PaxosMessage {
@@ -300,10 +295,13 @@ where
                     msg: PaxosMsg::FastAccepted(FastAccepted {
                         n: self.internal_storage.get_promise(),
                         idx,
-                        entry,
-                        prev_hash,
+                        entry: prop.entry,
+                        entry_hash,
+                        prev_hash: self.unsynced_hash,
                     }),
                 }));
+
+                self.unsynced_hash.extend_hash(&entry_hash);
             }
             _ => (),
         }
@@ -619,3 +617,4 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             custom_logger: config.server_config.custom_logger,
         }
     }
+}

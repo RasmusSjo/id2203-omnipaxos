@@ -55,7 +55,7 @@ where
             entry,
         }
     }
-    
+
     fn get_deadline(&self, time: i64) -> i64 {
         // TODO do we need this to be more pessimistic? E.g. deadline = OWD + uncertainty
         time + self.outgoing_owd_estimates.get_max_owd()
@@ -89,9 +89,9 @@ where
             prop.sent_time.1,
             received_time.1,
         );
-        
+
         self.incoming_owd_estimates.update(prop.sender, owd_sample);
-        
+
         let ack = DomAck {
             sender: self.pid,
             estimated_owd: self.incoming_owd_estimates.estimate_for(prop.sender),
@@ -114,7 +114,7 @@ where
     fn extend_deadline(&self, prop: DomPropose<T>) -> DomPropose<T> {
         let last_deadline = self.eb.last_released_deadline();
         let current_time = self.clock.get_time();
-        
+
         let new_deadline = match last_deadline {
             Some(last) => max(current_time, last + ONE_MICRO_SECOND),
             None => current_time,

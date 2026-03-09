@@ -188,6 +188,53 @@ pub mod sequence_paxos {
         pub n: Ballot,
     }
 
+    /// The id of a command issued by a client. Same type as in OmniPaxos-KV
+    pub type CommandId = usize;
+
+    /// Represents a clock timestamp, with timestamp and uncertainty.
+    /// TODO make this a struct and move it elsewhere as its not a message type
+    pub(crate) type ClockTimestamp = (i64, i64);
+
+    /// Type that uniquely identifies a client request.
+    #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct EntryId {
+        /// The id of the client
+        pub client_id: NodeId,
+        /// The id of the client command
+        pub command_id: CommandId,
+    }
+
+    /// Message sent by the DOM to all replicas, which is essentially a wrapper
+    /// around the original command but tagged with a deadline and sent time.
+    #[derive(Clone, Debug)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct DomPropose<T>
+    where
+        T: Entry,
+    {
+        /// The unique id of the client request
+        pub entry_id: EntryId,
+        /// The sender of the proposal
+        pub sender: NodeId,
+        /// The time at which the proposal was sent by the DOM
+        pub sent_time: ClockTimestamp,
+        /// The global time deadline for the proposal
+        pub deadline: i64,
+        /// The entry to be replicated
+        pub entry: T
+    }
+
+    /// Message sent as a response to a DomPropose message.
+    #[derive(Copy, Clone, Debug)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct DomAck {
+        /// The sender of the ack.
+        pub sender: NodeId,
+        /// The estimated one-way delay for the corresponding proposal.
+        pub estimated_owd: i64,
+    }
+
     /// Compaction Request
     #[allow(missing_docs)]
     #[derive(Clone, Debug)]
@@ -222,6 +269,8 @@ pub mod sequence_paxos {
         Compaction(Compaction),
         AcceptStopSign(AcceptStopSign),
         ForwardStopSign(StopSign),
+        DomPropose(DomPropose<T>),
+        DomAck(DomAck),
     }
 
     /// A struct for a Paxos message that also includes sender and receiver.

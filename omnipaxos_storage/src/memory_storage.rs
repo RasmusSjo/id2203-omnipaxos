@@ -20,10 +20,6 @@ where
     trimmed_idx: usize,
     /// Stored compact index
     compacted_idx: usize,
-    /// Hash of the log prefix up to compacted_idx.
-    prefix_hash_base: u64,
-    /// Rolling hash base power for compacted_idx (base^compacted_idx).
-    prefix_pow_base: u64,
     /// Stored snapshot
     snapshot: Option<T::Snapshot>,
     /// Stored StopSign
@@ -178,8 +174,6 @@ impl<T: Entry> Default for MemoryStorage<T> {
             ld: 0,
             trimmed_idx: 0,
             compacted_idx: 0,
-            prefix_hash_base: 0,
-            prefix_pow_base: 1,
             snapshot: None,
             stopsign: None,
         }

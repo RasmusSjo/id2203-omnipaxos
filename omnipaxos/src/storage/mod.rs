@@ -13,8 +13,6 @@ use std::{
     hash::{Hash}
 };
 
-pub(crate) const ROLLING_HASH_BASE: u64 = 1_000_000_007;
-
 #[derive(Debug)]
 struct UnsupportedStorageOp {
     name: &'static str,

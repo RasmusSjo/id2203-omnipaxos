@@ -5,7 +5,7 @@ use crate::{
     messages::Message,
     storage::{
         internal_storage::{InternalStorage, InternalStorageConfig},
-        Entry, Snapshot, StopSign, Storage, StorageResult, ROLLING_HASH_BASE,
+        Entry, Snapshot, StopSign, Storage, StorageResult,
     },
     util::{
         FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
@@ -262,64 +262,12 @@ where
         hasher.finish()
     }
 
-    fn roll_hash_iter<'b, I>(iter: I) -> (u64, u64, usize)
-    where
-        I: IntoIterator<Item = &'b T>,
-        T: 'b,
-    {
-        let mut hash = 0_u64;
-        let mut pow = 1_u64;
-        let mut len = 0_usize;
-        for entry in iter {
-            let entry_hash = Self::entry_hash_u64(entry);
-            hash = hash.wrapping_add(entry_hash.wrapping_mul(pow));
-            pow = pow.wrapping_mul(ROLLING_HASH_BASE);
-            len += 1;
-        }
-        (hash, pow, len)
-    }
-
     fn hash_log_prefix(&self, prefix_len: usize) -> StorageResult<Vec<u8>> {
-        let compacted_idx = self.internal_storage.get_compacted_idx();
-        let base_hash = self.internal_storage.get_prefix_hash_base();
-        let base_pow = self.internal_storage.get_prefix_pow_base();
-        if prefix_len <= compacted_idx {
-            return Ok(base_hash.to_le_bytes().to_vec());
-        }
-        let entries = self
-            .internal_storage
-            .get_entries(compacted_idx, prefix_len)?;
-        let (seg_hash, _, _) = Self::roll_hash_iter(entries.iter());
-        let hash = base_hash.wrapping_add(base_pow.wrapping_mul(seg_hash));
-        Ok(hash.to_le_bytes().to_vec())
+        Ok(vec![]) // Placeholder, implement proper hashing of log prefix up to prefix_len
     }
 
     fn hash_log_and_unsynced_prefix(&self, unsynced_prefix_len: usize) -> StorageResult<Vec<u8>> {
-        let compacted_idx = self.internal_storage.get_compacted_idx();
-        let accepted_idx = self.internal_storage.get_accepted_idx();
-        let base_hash = self.internal_storage.get_prefix_hash_base();
-        let base_pow = self.internal_storage.get_prefix_pow_base();
-        let mut seg_hash = 0_u64;
-        let mut pow = 1_u64;
-        if accepted_idx > compacted_idx {
-            let entries = self
-                .internal_storage
-                .get_entries(compacted_idx, accepted_idx)?;
-            let (log_hash, log_pow, _) = Self::roll_hash_iter(entries.iter());
-            seg_hash = log_hash;
-            pow = log_pow;
-        }
-        let mut keys: Vec<usize> = self.unsynced_log.keys().cloned().collect();
-        keys.sort_unstable();
-        for idx in keys.into_iter().take(unsynced_prefix_len) {
-            if let Some(unsynced) = self.unsynced_log.get(&idx) {
-                let entry_hash = Self::entry_hash_u64(&unsynced.entry);
-                seg_hash = seg_hash.wrapping_add(entry_hash.wrapping_mul(pow));
-                pow = pow.wrapping_mul(ROLLING_HASH_BASE);
-            }
-        }
-        let hash = base_hash.wrapping_add(base_pow.wrapping_mul(seg_hash));
-        Ok(hash.to_le_bytes().to_vec())
+        Ok(vec![]) // Placeholder, implement proper hashing of log and unsynced prefix  
     }
 
     fn handle_compaction(&mut self, c: Compaction) {

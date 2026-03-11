@@ -65,10 +65,10 @@ where
     /// before the current time.
     /// TODO Should we make the return type Vec<T> instead?
     pub(crate) fn release_ready(&mut self) -> Vec<DomPropose<T>> {
-        let now = self.clock.get_time();
+        let now = self.clock.get_time_with_uncertainty();
         let mut proposals = Vec::new();
 
-        while let Some(prop) = self.eb.pop_ready(now) {
+        while let Some(prop) = self.eb.pop_ready(now.0 - now.1) {
             proposals.push(prop);
         }
 
@@ -113,11 +113,12 @@ where
 
     fn extend_deadline(&self, prop: DomPropose<T>) -> DomPropose<T> {
         let last_deadline = self.eb.last_released_deadline();
-        let current_time = self.clock.get_time();
+        let now = self.clock.get_time_with_uncertainty();
+        let now_with_uncertainty = now.0 + now.1;
         
         let new_deadline = match last_deadline {
-            Some(last) => max(current_time, last + ONE_MICRO_SECOND),
-            None => current_time,
+            Some(last) => max(now_with_uncertainty, last + ONE_MICRO_SECOND),
+            None => now_with_uncertainty,
         };
 
         DomPropose {

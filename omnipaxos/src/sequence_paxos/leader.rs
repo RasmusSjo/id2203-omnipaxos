@@ -2,7 +2,7 @@ use super::super::{
     ballot_leader_election::Ballot,
     util::{LeaderState, PromiseMetaData},
 };
-use crate::util::{AcceptedMetaData, READ_ERROR_MSG, WRITE_ERROR_MSG};
+use crate::util::{AcceptedMetaData, READ_ERROR_MSG, WRITE_ERROR_MSG, DOMHash};
 
 use super::*;
 use std::collections::{BTreeMap, HashSet};
@@ -39,6 +39,7 @@ where
                 accepted_idx,
                 log_sync: None,
                 log_unsync: Some(self.unsynced_log.clone()),
+                log_prefix_hash: self.accepted_prefix_hash.clone(),
             };
             self.leader_state.set_promise(my_promise, self.pid, true);
             self.leader_state.set_unsynced_log(self.pid, self.unsynced_log.clone());
@@ -113,7 +114,7 @@ where
             .set_accepted_map(
                 fast_acc.idx, 
                 fast_acc.entry.clone(), 
-                fast_acc.prev_hash.clone(), 
+                fast_acc.prefix_hash.clone(), 
                 from, 
                 true
             );
@@ -246,6 +247,7 @@ where
             seq_num: self.leader_state.next_seq_num(to),
             decided_idx: self.get_decided_idx(),
             log_sync,
+            log_prefix_hash: self.accepted_prefix_hash,
             #[cfg(feature = "unicache")]
             unicache: self.internal_storage.get_unicache(),
         };
@@ -276,6 +278,7 @@ where
                         seq_num: self.leader_state.next_seq_num(pid),
                         decided_idx,
                         entries: accepted.entries.clone(),
+                        log_prefix_hash: self.accepted_prefix_hash,
                     };
                     self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                         from: self.pid,
@@ -321,15 +324,10 @@ where
         }));
     }
     
-    // fn handle_reconstructed_fast_accepted(&mut self, accIdx: usize) {
-    //     // Should integrate proper Hash function
-    //     let mut expected_prev_hash = self.hash_prefix_demo(accIdx);
-    //     let mut currIdx = accIdx;
-        
-    // }
     fn handle_majority_promises(&mut self) {
         let max_promise_sync = self.leader_state.take_max_promise_sync();
         let decided_idx = self.leader_state.get_max_decided_idx();
+
         // Update log and accepted_idx according to the highest accepted_idx among promises
         let mut new_accepted_idx = self
             .internal_storage
@@ -340,19 +338,17 @@ where
         let f = num_nodes / 2;
         let recover_threshold = (f + 1) / 2 + 1; // ceil(f/2) + 1
 
-        let mut expected_prev_hash = self
-            .hash_log_prefix(new_accepted_idx)
-            .expect(READ_ERROR_MSG);
-        let mut recovered_entries_set: HashSet<T> = HashSet::new();
+        let mut expected_prev_hash = self.leader_state.get_max_promise_accepted_hash().clone();
+        let mut recovered_entry_ids: Set<EntryId> = HashSet::new();
         let mut recovered_idx = new_accepted_idx + 1;
         'recover: loop {
             let entries_count = self
                 .leader_state
                 .get_matched_unsynced_entries(recovered_idx, expected_prev_hash.clone());
-            let mut winners = vec::Vec::<T>::new();
-            for (e, cnt) in entries_count {
+            let mut winners = vec::Vec::<(DOMHash, EntryId, T)>::new();
+            for (e_hash, e_id, e, cnt) in entries_count {
                 if cnt >= recover_threshold {
-                    winners.push(e);
+                    winners.push((e_hash, e_id, e));
                 }
             }
             if winners.is_empty() {
@@ -363,52 +359,36 @@ where
                 break 'recover;
             }
             let e = winners.pop().unwrap();
-            recovered_entries_set.insert(e.clone());
+            recovered_entry_ids.insert(e.1);
+
             new_accepted_idx = self
                 .internal_storage
-                .append_entries_without_batching(vec![e])
+                .append_entries_without_batching(vec![e.2.clone()])
                 .expect(WRITE_ERROR_MSG);
-            expected_prev_hash = self
-                .hash_log_prefix(new_accepted_idx)
-                .expect(READ_ERROR_MSG);
+
+            expected_prev_hash.extend_hash(&e.0);
             recovered_idx = new_accepted_idx + 1;
         }
 
         // remove entries from unsynced logs that are duplicated in synced-log
         self.unsynced_log.retain(|idx, entry| {
-            *idx > new_accepted_idx && !recovered_entries_set.contains(&entry.entry)
+            *idx > new_accepted_idx && !recovered_entry_ids.contains(&entry.entry_id)
         });
         // TODO: also remove duplicates from early/late buffers once implemented.
-
-        // append the remaining entries to the synced-log in deterministic order
-        let mut remaining: BTreeMap<(usize, u64), T> = BTreeMap::new();
-        for (idx, unsynced_entry) in &self.unsynced_log {
-            if *idx > new_accepted_idx {
-                let entry_hash = Self::entry_hash_u64(&unsynced_entry.entry);
-                remaining
-                    .entry((*idx, entry_hash))
-                    .or_insert_with(|| unsynced_entry.entry.clone());
-            }
-        }
-        for unsynced_log in self.leader_state.get_unsynced_log_store() {
-            for (idx, unsynced_entry) in unsynced_log {
-                if *idx > new_accepted_idx {
-                    let entry_hash = Self::entry_hash_u64(&unsynced_entry.entry);
-                    remaining
-                        .entry((*idx, entry_hash))
-                        .or_insert_with(|| unsynced_entry.entry.clone());
-                }
-            }
-        }
-        if !remaining.is_empty() {
-            let remaining_entries: Vec<T> = remaining.into_values().collect();
-            new_accepted_idx = self
-                .internal_storage
-                .append_entries_without_batching(remaining_entries)
-                .expect(WRITE_ERROR_MSG);
-            self.unsynced_log.retain(|idx, _| *idx > new_accepted_idx);
+        for eid in recovered_entry_ids {
+            self.dom.remove_from_buffers(eid);
         }
 
+        // re-append the remaining unsynced entries to the DOM buffer to update their deadlines
+        let dom_props: Vec<_> = self
+            .unsynced_log
+            .values()
+            .map(|ulog| self.dom.create_dom_propose(ulog.entry.clone(), ulog.entry_id))
+            .collect();
+
+        for dom_prop in dom_props {
+            self.send_dom_propose(dom_prop);
+        }
 
         if !self.accepted_reconfiguration() {
             if !self.buffered_proposals.is_empty() {

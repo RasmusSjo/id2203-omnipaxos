@@ -15,8 +15,6 @@ const DECIDE: &[u8] = b"DECIDE";
 const TRIM: &[u8] = b"TRIM";
 const STOPSIGN: &[u8] = b"STOPSIGN";
 const SNAPSHOT: &[u8] = b"SNAPSHOT";
-const PREFIX_HASH: &[u8] = b"PREFIX_HASH";
-const PREFIX_POW: &[u8] = b"PREFIX_POW";
 
 // Configuration for `PersistentStorage`.
 /// # Fields
@@ -260,18 +258,6 @@ where
         self.write_batch.put(SNAPSHOT, s);
         Ok(())
     }
-
-    fn batch_set_prefix_hash_base(&mut self, hash: u64) -> StorageResult<()> {
-        let bytes = u64::as_bytes(&hash);
-        self.write_batch.put(PREFIX_HASH, bytes);
-        Ok(())
-    }
-
-    fn batch_set_prefix_pow_base(&mut self, pow: u64) -> StorageResult<()> {
-        let bytes = u64::as_bytes(&pow);
-        self.write_batch.put(PREFIX_POW, bytes);
-        Ok(())
-    }
 }
 
 /// An error returning the proposal that was failed due to that the current configuration is stopped.
@@ -304,8 +290,6 @@ where
                 StorageOp::Trim(idx) => self.batch_trim(idx)?,
                 StorageOp::SetStopsign(ss) => self.batch_set_stopsign(ss)?,
                 StorageOp::SetSnapshot(snap) => self.batch_set_snapshot(snap)?,
-                StorageOp::SetPrefixHashBase(hash) => self.batch_set_prefix_hash_base(hash)?,
-                StorageOp::SetPrefixPowBase(pow) => self.batch_set_prefix_pow_base(pow)?,
             }
         }
         Ok(self.db.write(std::mem::take(&mut self.write_batch))?)
@@ -460,38 +444,6 @@ where
         let s = bincode::serialize(&snapshot)?;
         self.db.put(SNAPSHOT, s)?;
         Ok(())
-    }
-
-    fn set_prefix_hash_base(&mut self, hash: u64) -> StorageResult<()> {
-        let bytes = u64::as_bytes(&hash);
-        self.db.put(PREFIX_HASH, bytes)?;
-        Ok(())
-    }
-
-    fn get_prefix_hash_base(&self) -> StorageResult<Option<u64>> {
-        let v = self.db.get_pinned(PREFIX_HASH)?;
-        match v {
-            Some(bytes) => Ok(Some(
-                u64::read_from(bytes.as_bytes()).ok_or(ErrHelper {})?,
-            )),
-            None => Ok(None),
-        }
-    }
-
-    fn set_prefix_pow_base(&mut self, pow: u64) -> StorageResult<()> {
-        let bytes = u64::as_bytes(&pow);
-        self.db.put(PREFIX_POW, bytes)?;
-        Ok(())
-    }
-
-    fn get_prefix_pow_base(&self) -> StorageResult<Option<u64>> {
-        let v = self.db.get_pinned(PREFIX_POW)?;
-        match v {
-            Some(bytes) => Ok(Some(
-                u64::read_from(bytes.as_bytes()).ok_or(ErrHelper {})?,
-            )),
-            None => Ok(None),
-        }
     }
 
     fn trim(&mut self, trimmed_idx: usize) -> StorageResult<()> {

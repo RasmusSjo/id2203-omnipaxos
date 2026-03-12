@@ -10,6 +10,7 @@ use crate::{
     util::{
         FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
         UnsyncedLogEntry,
+        DOMHash,
         READ_ERROR_MSG,
         WRITE_ERROR_MSG,
     },
@@ -21,10 +22,8 @@ use slog::{debug, info, trace, warn, Logger};
 use std::{
     collections::HashMap,
     collections::HashSet as Set, 
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     fmt::Debug,
-    vec
+    vec,
 };
 use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
 
@@ -55,23 +54,16 @@ where
     current_seq_num: SequenceNumber,
     cached_promise_message: Option<Promise<T>>,
     unsynced_log: HashMap<usize, UnsyncedLogEntry<T>>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
+    accepted_prefix_hash: DOMHash, // Hash of the accepted prefix, initially 0 (XOR identity)
+    unsynced_hash: DOMHash, // Hash of the unsynced log, this does not contain accepted (synced) entries, initially 0 (XOR identity)
     #[cfg(feature = "logging")]
     logger: Logger,
 }
 
-type Hash = Vec<u8>;
-fn hash_entry(entry_id: EntryId, sender: NodeId, deadline: i64) -> Hash {
-    vec![]
-}
-
-fn extend_hash(prev_hash: Vec<Hash>, entry_hash: Hash) -> Vec<Hash> {
-    prev_hash
-}
-
 struct AcceptedMapEntry<T: Entry> {
     entry: T,
-    prev_hash: Hash,
-    fast: HashMap<(Hash, Hash), Set<NodeId>>,
+    prev_hash: DOMHash,
+    fast: HashMap<(DOMHash, DOMHash), Set<NodeId>>,
     slow: Set<NodeId>,
 }
 
@@ -139,6 +131,8 @@ where
             current_seq_num: SequenceNumber::default(),
             cached_promise_message: None,
             unsynced_log: HashMap::new(),
+            accepted_prefix_hash: DOMHash::default(),
+            unsynced_hash: DOMHash::default(),
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {
@@ -256,16 +250,6 @@ where
         self.internal_storage.get_compacted_idx()
     }
 
-    fn entry_hash_u64(entry: &T) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        entry.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    fn hash_log_prefix(&self, prefix_len: usize) -> StorageResult<Vec<u8>> {
-        Ok(vec![]) // Placeholder, implement proper hashing of log prefix up to prefix_len
-    }
-
     fn hash_log_and_unsynced_prefix(&self, unsynced_prefix_len: usize) -> StorageResult<Vec<u8>> {
         Ok(vec![]) // Placeholder, implement proper hashing of log and unsynced prefix  
     }
@@ -285,36 +269,46 @@ where
     //This might be in the wrong place because the algorithm PDF says it goes on the follower side,
     //right after DOM-R, but if both followers and leaders have DOM-R, then it goes in mod.rs.
     //If it's wrong, I'll move it in a moment.
-    pub(crate) fn handle_dom_release(&mut self, entry: T, leader: NodeId) {
+    pub(crate) fn handle_dom_release(&mut self, prop: DomPropose<T>) {
         match self.state {
             // Leader case: append to synced-log and send Accept to followers
             (Role::Leader, Phase::Accept) => {
                 // I think we need to initialize the accepted map for this entry here
                 //
                 // prevHash = Hash(synced-log)
-                // This hashing only uses the length of the logs instead of the content.
-                // We need to replace it with a more safe hashing that also takes into account the content of the logs 
-                let prev_hash = self
-                    .hash_log_prefix(self.internal_storage.get_accepted_idx())
-                    .expect(READ_ERROR_MSG);
-                self.leader_state.set_accepted_map(self.leader_state.get_accepted_idx(self.pid), entry.clone(), prev_hash.clone(), self.pid, false);
-                self.accept_entry_leader(entry);
+                let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
+                self.accepted_prefix_hash.extend_hash(&entry_hash);
+
+                self.leader_state.set_accepted_map(
+                    self.leader_state.get_accepted_idx(self.pid) + 1, 
+                    prop.entry.clone(), 
+                    self.accepted_prefix_hash.clone(), 
+                    self.pid, 
+                    false
+                );
+                self.accept_entry_leader(prop.entry);
             }
             // Follower case: append to unsynced-log and send FastAccepted to leader
             (Role::Follower, Phase::Accept) => {
+                let leader = self.get_current_leader();
+
                 // idx = |synced-log| + |unsynced-log| + 1
                 let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
 
-                // prevHash = Hash(synced-log + unsynced-log)
-                // This hashing only uses the length of the logs instead of the content.
-                // We need to replace it with a more safe hashing that also takes into account the content of the logs 
-                let prev_hash = self
-                    .hash_log_and_unsynced_prefix(self.unsynced_log.len())
-                    .expect(READ_ERROR_MSG);
-
+                let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
+                
+                let mut unsynced_prefix_hash = self.unsynced_hash.clone();
+                unsynced_prefix_hash.extend_hash(&self.accepted_prefix_hash);
+                
                 // unsynced-log.append(entry)
-                self.unsynced_log.insert(idx, UnsyncedLogEntry { entry: entry.clone(), prev_hash: prev_hash.clone() });
-
+                self.unsynced_log.insert(idx, UnsyncedLogEntry { 
+                    entry: prop.entry.clone(), 
+                    entry_id: prop.entry_id,
+                    deadline: prop.deadline,
+                    entry_hash: entry_hash.clone(),
+                    prefix_hash: unsynced_prefix_hash.clone(),}
+                );
+                
                 // send <FastAccepted, promisedRnd, idx, entry>
                 self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                     from: self.pid,
@@ -322,10 +316,14 @@ where
                     msg: PaxosMsg::FastAccepted(FastAccepted {
                         n: self.internal_storage.get_promise(),
                         idx,
-                        entry,
-                        prev_hash,
+                        entry: prop.entry,
+                        entry_hash,
+                        prefix_hash: unsynced_prefix_hash,
                     }),
                 }));
+
+                self.unsynced_hash.extend_hash(&entry_hash); // Update unsynced hash with the new entry
+                
             }
             _ => (),
         }
@@ -376,7 +374,8 @@ where
             },
             PaxosMsg::AcceptSync(acc_sync) => self.handle_acceptsync(acc_sync, m.from),
             PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
-            PaxosMsg::FastAccept(acc) => self.handle_fastaccept(acc),
+            // TODO: Remove this
+            // PaxosMsg::FastAccept(acc) => self.handle_fastaccept(acc),
             PaxosMsg::NotAccepted(not_acc) => self.handle_notaccepted(not_acc, m.from),
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
             PaxosMsg::FastAccepted(fast_acc) => self.handle_fast_accepted(fast_acc, m.from),

@@ -4,14 +4,13 @@ use crate::{
     storage::{
         Entry, Snapshot, SnapshotType, StopSign, Storage, StorageOp, StorageResult,
     },
-    util::{AcceptedMetaData, IndexEntry, LogEntry, LogSync, SnapshottedEntry},
+    util::{AcceptedMetaData, IndexEntry, LogEntry, LogSync, SnapshottedEntry,},
     CompactionErr,
 };
 #[cfg(feature = "unicache")]
 use crate::{unicache::*, util::NodeId};
 use std::{
     cmp::Ordering,
-    hash::{Hash, Hasher},
     marker::PhantomData,
     ops::{Bound, RangeBounds},
 };
@@ -332,8 +331,6 @@ where
                     sync_txn.push(StorageOp::Trim(sync.sync_idx));
                     sync_txn.push(StorageOp::SetCompactedIdx(sync.sync_idx));
                     sync_txn.push(StorageOp::SetSnapshot(Some(c)));
-                    sync_txn.push(StorageOp::SetPrefixHashBase(0));
-                    sync_txn.push(StorageOp::SetPrefixPowBase(1));
                 }
                 Some(SnapshotType::Delta(d)) => {
                     let mut snapshot = self.create_decided_snapshot()?;
@@ -342,8 +339,6 @@ where
                     sync_txn.push(StorageOp::Trim(sync.sync_idx));
                     sync_txn.push(StorageOp::SetCompactedIdx(sync.sync_idx));
                     sync_txn.push(StorageOp::SetSnapshot(Some(snapshot)));
-                    sync_txn.push(StorageOp::SetPrefixHashBase(0));
-                    sync_txn.push(StorageOp::SetPrefixPowBase(1));
                 }
                 None => (),
             }

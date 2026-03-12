@@ -20,14 +20,9 @@ use omnipaxos::storage::Entry;
 #[cfg(feature = "unicache")]
 use omnipaxos::unicache::UniCache;
 use omnipaxos::{
-    messages::{
-        ballot_leader_election::{BLEMessage, HeartbeatMsg, HeartbeatReply},
-        sequence_paxos::{AcceptSync, PaxosMessage, PaxosMsg, Prepare, Promise},
-        Message,
-    },
-    storage::{Snapshot, SnapshotType, Storage},
-    util::{LogSync, NodeId, SequenceNumber, SystemClock},
-    OmniPaxos, OmniPaxosConfig,
+    OmniPaxos, OmniPaxosConfig, messages::{
+        Message, ballot_leader_election::{BLEMessage, HeartbeatMsg, HeartbeatReply}, sequence_paxos::{AcceptSync, PaxosMessage, PaxosMsg, Prepare, Promise}
+    }, storage::{Snapshot, SnapshotType, Storage}, util::{DOMHash, LogSync, NodeId, SequenceNumber, SystemClock}
 };
 use omnipaxos_storage::memory_storage::MemoryStorage;
 use serial_test::serial;
@@ -132,6 +127,7 @@ fn _setup_leader() -> (
             n_accepted: n_old,
             log_sync: None,
             log_unsync: None,
+            log_prefix_hash: DOMHash::default(),
         }),
     });
     op.handle_incoming(setup_msg);
@@ -190,6 +186,7 @@ fn setup_follower() -> (
                 sync_idx: 0,
                 stopsign: None,
             },
+            log_prefix_hash: DOMHash::default(),
             #[cfg(feature = "unicache")]
             unicache: <Value as Entry>::UniCache::new(),
         }),
@@ -247,6 +244,8 @@ fn atomic_storage_acceptsync_test() {
                     sync_idx: 0,
                     stopsign: None,
                 },
+                // TODO: make this hash non-default since we have suffix entries
+                log_prefix_hash: DOMHash::default(),
                 #[cfg(feature = "unicache")]
                 unicache: <Value as Entry>::UniCache::new(),
             }),
@@ -294,6 +293,8 @@ fn atomic_storage_trim_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                // TODO: make this hash non-default since we have suffix entries
+                log_prefix_hash: DOMHash::default(),
             }),
         });
         op.handle_incoming(setup_msg);
@@ -358,6 +359,8 @@ fn atomic_storage_snapshot_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                // TODO: make this hash non-default since we have suffix entries
+                log_prefix_hash: DOMHash::default(),
             }),
         });
         op.handle_incoming(setup_msg);
@@ -436,6 +439,8 @@ fn atomic_storage_accept_decide_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                // TODO: make this hash non-default since we have suffix entries
+                log_prefix_hash: DOMHash::default(),
             }),
         });
         let _res = catch_unwind(AssertUnwindSafe(|| op.handle_incoming(msg.clone())));
@@ -564,6 +569,8 @@ fn atomic_storage_majority_promises_test() {
                     stopsign: None,
                 }),
                 log_unsync: None,
+                // TODO: make this hash non-default since we have suffix entries
+                log_prefix_hash: DOMHash::default(),
             }),
         });
         let _res = catch_unwind(AssertUnwindSafe(|| op.handle_incoming(msg.clone())));

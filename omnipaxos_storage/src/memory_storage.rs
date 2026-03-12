@@ -45,8 +45,6 @@ where
                 StorageOp::Trim(idx) => self.trim(idx)?,
                 StorageOp::SetStopsign(ss) => self.set_stopsign(ss)?,
                 StorageOp::SetSnapshot(snap) => self.set_snapshot(snap)?,
-                StorageOp::SetPrefixHashBase(hash) => self.set_prefix_hash_base(hash)?,
-                StorageOp::SetPrefixPowBase(pow) => self.set_prefix_pow_base(pow)?,
             }
         }
         Ok(())
@@ -144,24 +142,6 @@ where
 
     fn get_snapshot(&self) -> StorageResult<Option<T::Snapshot>> {
         Ok(self.snapshot.clone())
-    }
-
-    fn set_prefix_hash_base(&mut self, hash: u64) -> StorageResult<()> {
-        self.prefix_hash_base = hash;
-        Ok(())
-    }
-
-    fn get_prefix_hash_base(&self) -> StorageResult<Option<u64>> {
-        Ok(Some(self.prefix_hash_base))
-    }
-
-    fn set_prefix_pow_base(&mut self, pow: u64) -> StorageResult<()> {
-        self.prefix_pow_base = pow;
-        Ok(())
-    }
-
-    fn get_prefix_pow_base(&self) -> StorageResult<Option<u64>> {
-        Ok(Some(self.prefix_pow_base))
     }
 }
 

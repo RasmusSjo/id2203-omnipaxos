@@ -42,6 +42,7 @@ where
                 accepted_idx,
                 log_sync,
                 log_unsync: Some(self.unsynced_log.clone()),
+                log_prefix_hash: self.accepted_prefix_hash,
             };
             self.cached_promise_message = Some(promise.clone());
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
@@ -93,6 +94,7 @@ where
             && self.state == (Role::Follower, Phase::Accept)
             && self.handle_sequence_num(acc_dec.seq_num, acc_dec.n.pid) == MessageStatus::Expected
         {
+            // TODO: 1. For Accept, remove entries from unsynced log and update unsynced hash. Update accepted prefix hash.
             #[cfg(not(feature = "unicache"))]
             let entries = acc_dec.entries;
             #[cfg(feature = "unicache")]
@@ -101,6 +103,9 @@ where
                 .internal_storage
                 .append_entries_and_get_accepted_idx(entries)
                 .expect(WRITE_ERROR_MSG);
+            // Update accepted prefix hash after appending entries
+            self.accepted_prefix_hash = acc_dec.log_prefix_hash;
+
             let flushed_after_decide =
                 self.update_decided_idx_and_get_accepted_idx(acc_dec.decided_idx);
             if flushed_after_decide.is_some() {
@@ -112,7 +117,8 @@ where
         }
     }
 
-    pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
+    // TODO: Remove
+    // pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
 
     pub(crate) fn handle_accept_stopsign(&mut self, acc_ss: AcceptStopSign) {
         if self.check_valid_ballot(acc_ss.n)

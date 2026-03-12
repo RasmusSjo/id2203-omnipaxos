@@ -3,6 +3,7 @@ use crate::{
     storage::Entry,
     util::NodeId,
 };
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +12,7 @@ pub mod sequence_paxos {
     use crate::{
         ballot_leader_election::Ballot,
         storage::{Entry, StopSign},
-        util::{LogSync, NodeId, SequenceNumber, UnsyncedLogEntry},
+        util::{LogSync, NodeId, SequenceNumber, UnsyncedLogEntry, DOMHash},
     };
     #[cfg(feature = "serde")]
     use serde::{Deserialize, Serialize};
@@ -62,6 +63,8 @@ pub mod sequence_paxos {
         pub log_sync: Option<LogSync<T>>,
         /// The unsynced-log entries of this follower
         pub log_unsync: Option<HashMap<usize, UnsyncedLogEntry<T>>>,
+        /// The hash value for the log prefix up to the entries in `log_sync`.
+        pub log_prefix_hash: DOMHash,
     }
 
     /// AcceptSync message sent by the leader to synchronize the logs of all replicas in the prepare phase.
@@ -80,6 +83,8 @@ pub mod sequence_paxos {
         /// The log update which the follower applies to its log in order to sync
         /// with the leader.
         pub log_sync: LogSync<T>,
+        /// The hash value for the log prefix up to the entries in `log_sync`.
+        pub log_prefix_hash: DOMHash,
         #[cfg(feature = "unicache")]
         /// The UniCache of the leader
         pub unicache: T::UniCache,
@@ -101,32 +106,35 @@ pub mod sequence_paxos {
         #[cfg(not(feature = "unicache"))]
         /// Entries to be replicated.
         pub entries: Vec<T>,
+        /// The hash value for the log prefix up to the entries in `entries`.
+        pub log_prefix_hash: DOMHash,
         #[cfg(feature = "unicache")]
         /// Entries to be replicated.
         pub entries: Vec<T::EncodeResult>,
     }
  
-    /// Message with entries to be replicated and the latest decided index sent by the leader in the accept phase.
-    #[derive(Clone, Debug)]
-    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-    pub struct FastAccept<T>
-    where
-        T: Entry,
-    {
-        /// The current round.
-        pub n: Ballot,
-        /// The time at which the entry should be appended. [TODO] this should we changed to some
-        /// sort of timestamp-type.
-        pub deadline: u32,
-        /// The decided index. [TODO] unsure if this should remain.
-        pub decided_idx: usize,
-        #[cfg(not(feature = "unicache"))]
-        /// Entries to be replicated.
-        pub entries: Vec<T>,
-        #[cfg(feature = "unicache")]
-        /// Entries to be replicated.
-        pub entries: Vec<T::EncodeResult>,
-    }
+    // TODO: Remove FastAccept
+    // /// Message with entries to be replicated and the latest decided index sent by the leader in the accept phase.
+    // #[derive(Clone, Debug)]
+    // #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    // pub struct FastAccept<T>
+    // where
+    //     T: Entry,
+    // {
+    //     /// The current round.
+    //     pub n: Ballot,
+    //     /// The time at which the entry should be appended. [TODO] this should we changed to some
+    //     /// sort of timestamp-type.
+    //     pub deadline: u32,
+    //     /// The decided index. [TODO] unsure if this should remain.
+    //     pub decided_idx: usize,
+    //     #[cfg(not(feature = "unicache"))]
+    //     /// Entries to be replicated.
+    //     pub entries: Vec<T>,
+    //     #[cfg(feature = "unicache")]
+    //     /// Entries to be replicated.
+    //     pub entries: Vec<T::EncodeResult>,
+    // }
 
     /// Message sent by follower to leader when entries has been accepted.
     #[derive(Copy, Clone, Debug)]
@@ -151,8 +159,10 @@ pub mod sequence_paxos {
         pub idx: usize,
         /// The entry the follower accepted optimistically.
         pub entry: T,
-        /// Hash of the follower's log prefix before this entry.
-        pub prev_hash: Vec<u8>,
+        /// Hash of the current entry
+        pub entry_hash: DOMHash,
+        /// Hash of the follower's log prefix including this entry
+        pub prefix_hash: DOMHash,
     }
 
     /// Message sent by leader to followers to decide up to a certain index in the log.
@@ -200,7 +210,7 @@ pub mod sequence_paxos {
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct EntryId {
         /// The id of the client
-        pub client_id: NodeId,
+        pub client_id: u64,
         /// The id of the client command
         pub command_id: CommandId,
     }
@@ -259,7 +269,8 @@ pub mod sequence_paxos {
         Promise(Promise<T>),
         AcceptSync(AcceptSync<T>),
         AcceptDecide(AcceptDecide<T>),
-        FastAccept(FastAccept<T>),
+        // TODO: Remove this
+        // FastAccept(FastAccept<T>),
         Accepted(Accepted),
         FastAccepted(FastAccepted<T>),
         NotAccepted(NotAccepted),

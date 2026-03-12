@@ -6,7 +6,7 @@ fn build_op_test() {
     };
     use omnipaxos_storage::memory_storage::MemoryStorage;
 
-    #[derive(Clone, Debug, Entry, Hash, Eq, PartialEq)]
+    #[derive(Clone, Debug, Entry)]
     struct TestEntry {
         pub _field1: u64,
         pub _field2: String,

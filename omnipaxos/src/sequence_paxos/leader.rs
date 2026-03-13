@@ -2,10 +2,10 @@ use super::super::{
     ballot_leader_election::Ballot,
     util::{LeaderState, PromiseMetaData},
 };
-use crate::util::{AcceptedMetaData, READ_ERROR_MSG, WRITE_ERROR_MSG, DOMHash};
+use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG, DOMHash};
 
 use super::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{HashSet};
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
@@ -370,16 +370,16 @@ where
             recovered_idx = new_accepted_idx + 1;
         }
 
-        // remove entries from unsynced logs that are duplicated in synced-log
+        // Remove entries from unsynced logs that are duplicated in synced-log
         self.unsynced_log.retain(|idx, entry| {
             *idx > new_accepted_idx && !recovered_entry_ids.contains(&entry.entry_id)
         });
-        // TODO: also remove duplicates from early/late buffers once implemented.
+        // Also remove duplicates from early/late buffers once implemented.
         for eid in recovered_entry_ids {
             self.dom.remove_from_buffers(eid);
         }
 
-        // re-append the remaining unsynced entries to the DOM buffer to update their deadlines
+        // Re-append the remaining unsynced entries to the DOM buffer to update their deadlines
         let dom_props: Vec<_> = self
             .unsynced_log
             .values()

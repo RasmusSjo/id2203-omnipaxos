@@ -60,13 +60,6 @@ where
     logger: Logger,
 }
 
-struct AcceptedMapEntry<T: Entry> {
-    entry: T,
-    prev_hash: DOMHash,
-    fast: HashMap<(DOMHash, DOMHash), Set<NodeId>>,
-    slow: Set<NodeId>,
-}
-
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
     T: Entry,
@@ -165,10 +158,9 @@ where
 
     pub(crate) fn tick(&mut self) {
         let proposals = &self.dom.release_ready();
-        let entries: Vec<T> = proposals.iter().map(|p| p.entry.clone()).collect();
 
-        for entry in entries {
-            self.handle_dom_release(entry, self.get_current_leader());
+        for prop in proposals {
+            self.handle_dom_release(prop.clone());
         }
     }
 
@@ -257,10 +249,6 @@ where
     /// Return trim index from storage.
     pub(crate) fn get_compacted_idx(&self) -> usize {
         self.internal_storage.get_compacted_idx()
-    }
-
-    fn hash_log_and_unsynced_prefix(&self, unsynced_prefix_len: usize) -> StorageResult<Vec<u8>> {
-        Ok(vec![]) // Placeholder, implement proper hashing of log and unsynced prefix  
     }
 
     fn handle_compaction(&mut self, c: Compaction) {
@@ -383,8 +371,6 @@ where
             },
             PaxosMsg::AcceptSync(acc_sync) => self.handle_acceptsync(acc_sync, m.from),
             PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
-            // TODO: Remove this
-            // PaxosMsg::FastAccept(acc) => self.handle_fastaccept(acc),
             PaxosMsg::NotAccepted(not_acc) => self.handle_notaccepted(not_acc, m.from),
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
             PaxosMsg::FastAccepted(fast_acc) => self.handle_fast_accepted(fast_acc, m.from),

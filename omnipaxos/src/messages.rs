@@ -112,29 +112,6 @@ pub mod sequence_paxos {
         /// Entries to be replicated.
         pub entries: Vec<T::EncodeResult>,
     }
- 
-    // TODO: Remove FastAccept
-    // /// Message with entries to be replicated and the latest decided index sent by the leader in the accept phase.
-    // #[derive(Clone, Debug)]
-    // #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-    // pub struct FastAccept<T>
-    // where
-    //     T: Entry,
-    // {
-    //     /// The current round.
-    //     pub n: Ballot,
-    //     /// The time at which the entry should be appended. [TODO] this should we changed to some
-    //     /// sort of timestamp-type.
-    //     pub deadline: u32,
-    //     /// The decided index. [TODO] unsure if this should remain.
-    //     pub decided_idx: usize,
-    //     #[cfg(not(feature = "unicache"))]
-    //     /// Entries to be replicated.
-    //     pub entries: Vec<T>,
-    //     #[cfg(feature = "unicache")]
-    //     /// Entries to be replicated.
-    //     pub entries: Vec<T::EncodeResult>,
-    // }
 
     /// Message sent by follower to leader when entries has been accepted.
     #[derive(Copy, Clone, Debug)]
@@ -269,8 +246,6 @@ pub mod sequence_paxos {
         Promise(Promise<T>),
         AcceptSync(AcceptSync<T>),
         AcceptDecide(AcceptDecide<T>),
-        // TODO: Remove this
-        // FastAccept(FastAccept<T>),
         Accepted(Accepted),
         FastAccepted(FastAccepted<T>),
         NotAccepted(NotAccepted),

@@ -56,10 +56,12 @@ where
     pub(crate) fn handle_acceptsync(&mut self, accsync: AcceptSync<T>, from: NodeId) {
         if self.check_valid_ballot(accsync.n) && self.state == (Role::Follower, Phase::Prepare) {
             self.cached_promise_message = None;
+                
             let new_accepted_idx = self
                 .internal_storage
                 .sync_log(accsync.n, accsync.decided_idx, Some(accsync.log_sync))
                 .expect(WRITE_ERROR_MSG);
+            self.accepted_prefix_hash = accsync.log_prefix_hash;
             if self.internal_storage.get_stopsign().is_none() {
                 self.forward_buffered_proposals();
             }
@@ -72,6 +74,9 @@ where
             let cached_idx = self.outgoing.len();
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
             self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
+            // Do we need to clear buffered proposals that are now included in the log sync?
+            // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted. 
+
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
                 to: from,
@@ -94,7 +99,8 @@ where
             && self.state == (Role::Follower, Phase::Accept)
             && self.handle_sequence_num(acc_dec.seq_num, acc_dec.n.pid) == MessageStatus::Expected
         {
-            // TODO: 1. For Accept, remove entries from unsynced log and update unsynced hash. Update accepted prefix hash.
+            // TODO: For Accept, remove entries from unsynced log and update unsynced hash. Update accepted prefix hash.
+            // TODO: Also, if the accepted entries are different from the entries in the unsynced log, we should clear the unsynced log and update the unsynced hash.
             #[cfg(not(feature = "unicache"))]
             let entries = acc_dec.entries;
             #[cfg(feature = "unicache")]
@@ -116,9 +122,6 @@ where
             }
         }
     }
-
-    // TODO: Remove
-    // pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
 
     pub(crate) fn handle_accept_stopsign(&mut self, acc_ss: AcceptStopSign) {
         if self.check_valid_ballot(acc_ss.n)

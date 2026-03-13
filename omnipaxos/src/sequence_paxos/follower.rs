@@ -75,6 +75,7 @@ where
             let cached_idx = self.outgoing.len();
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
             self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
+            self.unsynced_hash = DOMHash::default();
             // Do we need to clear buffered proposals that are now included in the log sync?
             // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted. 
 

@@ -126,10 +126,14 @@ where
         let fast_quorum = f + (f + 1) / 2 + 1;
         let slow_quorum = f + 1;
 
-        // collect all fast voters across all keys
-        let fast_voters: Set<NodeId> = entry.fast.values().flatten().cloned().collect();
+        let leader_candidate = (entry.prefix_hash, entry.entry_hash);
+        let fast_voters: Set<NodeId> = entry
+            .fast
+            .get(&leader_candidate)
+            .cloned()
+            .unwrap_or_default();
 
-        // Union(acceptedMap<idx>.fast, acceptedMap<idx>.slow)
+        // Only count fast-path votes for the leader's current candidate at this index.
         let combined: Set<NodeId> = fast_voters.union(&entry.slow).cloned().collect();
 
         // Check fast quorum (f + ceil(f/2) + 1)
@@ -375,6 +379,7 @@ where
             expected_prev_hash.extend_hash(&e.0);
             recovered_idx = new_accepted_idx + 1;
         }
+        self.accepted_prefix_hash = expected_prev_hash;
 
         // Remove entries from unsynced logs that are duplicated in synced-log
         self.unsynced_log.retain(|idx, entry| {

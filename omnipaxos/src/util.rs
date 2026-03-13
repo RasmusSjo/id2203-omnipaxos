@@ -101,6 +101,8 @@ pub struct UnsyncedLogEntry<T: Entry> {
 pub struct AcceptedMapEntry<T: Entry> {
     /// The entry which waits to be accepted on the fast path or the slow path.
     pub entry: T,
+    /// The hash of the leader's candidate entry for this index.
+    pub entry_hash: DOMHash,
     /// The hash of the prefix of the leader's log before this entry, used for checking if the fast path accepted entry is on the same log as other entries with the same index.
     pub prefix_hash: DOMHash,
     /// The set of followers which accepted this entry on the fast path
@@ -414,6 +416,7 @@ where
     pub fn set_accepted_map(&mut self, idx: usize, entry: T, entry_hash: DOMHash, prefix_hash: DOMHash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {
         let accepted_entry = self.accepted_map.entry(idx).or_insert_with(|| AcceptedMapEntry {
             entry,
+            entry_hash,
             prefix_hash: prefix_hash.clone(),
             fast: HashMap::new(),
             slow: HashSet::new(),

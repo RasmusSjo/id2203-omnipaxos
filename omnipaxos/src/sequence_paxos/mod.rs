@@ -271,10 +271,9 @@ where
         match self.state {
             // Leader case: append to synced-log and send Accept to followers
             (Role::Leader, Phase::Accept) => {
-                // I think we need to initialize the accepted map for this entry here
-                //
-                // prevHash = Hash(synced-log)
+                // The accepted-map key uses the prefix before this entry is appended.
                 let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
+                let prefix_hash = self.accepted_prefix_hash.clone();
                 self.accepted_prefix_hash.extend_hash(&entry_hash);
                 self.leader_state
                     .push_pending_accept_meta(AcceptedEntryMeta {
@@ -286,7 +285,7 @@ where
                     self.leader_state.get_accepted_idx(self.pid) + 1,
                     prop.entry.clone(),
                     entry_hash,
-                    self.accepted_prefix_hash.clone(),
+                    prefix_hash,
                     self.pid,
                     false,
                 );

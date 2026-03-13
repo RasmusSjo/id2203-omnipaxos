@@ -433,6 +433,11 @@ where
         }
         accepted_entry.clone()
     }
+
+    /// Prunes the accepted map up to the decided index.
+    pub fn prune_accepted_map(&mut self, decided_idx: usize) {
+        self.accepted_map.retain(|&idx, _| idx > decided_idx);
+    }
 }
 
 /// The entry read in the log.

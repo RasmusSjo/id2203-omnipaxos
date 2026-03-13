@@ -144,7 +144,7 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
-
+            self.leader_state.prune_accepted_map(decided_idx);
             //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
@@ -160,6 +160,7 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
+            self.leader_state.prune_accepted_map(decided_idx);
             // send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
@@ -473,6 +474,7 @@ where
                 self.internal_storage
                     .set_decided_idx(decided_idx)
                     .expect(WRITE_ERROR_MSG);
+                self.leader_state.prune_accepted_map(decided_idx);
                 for pid in self.leader_state.get_promised_followers() {
                     let latest_accdec = self.get_latest_accdec_message(pid);
                     match latest_accdec {

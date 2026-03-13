@@ -143,4 +143,9 @@ where
             self.lb.remove(entry_id)
         }
     }
+
+    /// Clear late buffer. 
+    pub(crate) fn clear_late_buffer(&mut self) {
+        self.lb.clear();
+    }
 }

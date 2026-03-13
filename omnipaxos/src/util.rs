@@ -1,6 +1,6 @@
 use super::{
     ballot_leader_election::Ballot,
-    messages::sequence_paxos::Promise,
+    messages::sequence_paxos::{AcceptedEntryMeta, Promise, EntryId},
     storage::{Entry, SnapshotType, StopSign},
 };
 #[cfg(feature = "serde")]
@@ -10,7 +10,55 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
+    collections::{HashMap, HashSet, VecDeque},
+    hash::{Hash, Hasher, DefaultHasher},
 };
+
+/// Struct for implementing hashes.
+///
+/// It is possible to create a default hash with value 0, or using a (entry_id, deadline) pair, and
+/// to then extend an existing hash using another existing hash. They should also be comparable.
+///
+/// The extension uses xor (as in Nezha), it might be important to remember that this makes it
+/// commutative. For the applications is should not matter however, the only case where an entry might
+/// be out of order is if the leader adds it late, in which case the deadline should have been changed.
+///
+/// I'm sure that there are a thousand and one issues with the implementation, but hopefully it
+/// works for the required circumstances.
+#[derive(Clone, Copy, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DOMHash {
+    hash: u64,
+}
+
+impl DOMHash {
+    pub(crate) fn with(entry_id: EntryId, deadline: i64) -> Self {
+        let tuple = (entry_id, deadline);
+        let mut hasher = DefaultHasher::new();
+        tuple.hash(&mut hasher);
+        Self {
+            hash: hasher.finish()
+        }
+    }
+
+    pub(crate) fn extend_hash(&mut self, other: &Self) {
+        self.hash ^= other.hash;
+    }
+}
+
+impl PartialEq for DOMHash {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for DOMHash {}
+
+impl Default for DOMHash {
+    fn default() -> Self {
+        Self { hash: 0 }
+    }
+}
 
 /// Struct used to help another server synchronize their log with the current state of our own log.
 #[derive(Clone, Debug)]
@@ -27,6 +75,41 @@ where
     pub sync_idx: usize,
     /// The accepted StopSign.
     pub stopsign: Option<StopSign>,
+}
+
+/// Struct used to unsyced-log entries
+#[derive(Clone, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Struct used to keep track of unsynced log entries for the Project.
+pub struct UnsyncedLogEntry<T: Entry> {
+    /// The entry which was sent on the fast path and is not yet synced.
+    pub entry: T,
+    /// The entry id of the entry, used for checking if the entry is the same as other entries with the same index.
+    pub entry_id: EntryId,
+    /// The hash of the entry
+    pub deadline: i64,
+    /// The hash of the entry
+    pub entry_hash: DOMHash,
+    /// The hash of the prefix of the log before this entry, used for checking if the entry is on the same log as other entries with the same index.
+    /// So, this is the hash of the log up to the previous entry, not including this entry.
+    pub prefix_hash: DOMHash,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+/// Struct used to keep track of each entry's fast and slow path acceptors for the Project.
+pub struct AcceptedMapEntry<T: Entry> {
+    /// The entry which waits to be accepted on the fast path or the slow path.
+    pub entry: T,
+    /// The hash of the leader's candidate entry for this index.
+    pub entry_hash: DOMHash,
+    /// The hash of the prefix of the leader's log before this entry, used for checking if the fast path accepted entry is on the same log as other entries with the same index.
+    pub prefix_hash: DOMHash,
+    /// The set of followers which accepted this entry on the fast path
+    /// The key of the map is a tuple of (prefix_hash, entry_hash) where prefix_hash is the hash of the prefix of the follower's log before this entry and entry_hash is the hash of the entry itself.
+    pub fast: HashMap<(DOMHash, DOMHash), HashSet<NodeId>>,
+    /// The set of followers which accepted this entry on the slow path
+    pub slow: HashSet<NodeId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -87,11 +170,18 @@ where
     pub accepted_indexes: Vec<usize>,
     max_promise_meta: PromiseMetaData,
     max_promise_sync: Option<LogSync<T>>,
+    max_promise_accepted_hash: DOMHash,
     latest_accept_meta: Vec<Option<(Ballot, usize)>>, //  index in outgoing
     pub max_pid: usize,
     // The number of promises needed in the prepare phase to become synced and
     // the number of accepteds needed in the accept phase to decide an entry.
     pub quorum: Quorum,
+
+    // Modifications for the Project
+    accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
+    /// unsynced_log_store\[pid\]\[idx\] = the unsynced log entry with index idx from the follower with id pid
+    unsynced_log_store: Vec<HashMap<usize, UnsyncedLogEntry<T>>>,
+    pending_accept_meta: VecDeque<AcceptedEntryMeta>,
 }
 
 impl<T> LeaderState<T>
@@ -106,9 +196,13 @@ where
             accepted_indexes: vec![0; max_pid],
             max_promise_meta: PromiseMetaData::default(),
             max_promise_sync: None,
+            max_promise_accepted_hash: DOMHash::default(), // 0 hash by default
             latest_accept_meta: vec![None; max_pid],
             max_pid,
             quorum,
+            accepted_map: HashMap::new(),
+            unsynced_log_store: vec![HashMap::new(); max_pid],
+            pending_accept_meta: VecDeque::new(),
         }
     }
 
@@ -143,8 +237,12 @@ where
         if check_max_prom && promise_meta > self.max_promise_meta {
             self.max_promise_meta = promise_meta.clone();
             self.max_promise_sync = prom.log_sync;
+            self.max_promise_accepted_hash = prom.log_prefix_hash;
         }
         self.promises_meta[Self::pid_to_idx(from)] = PromiseState::Promised(promise_meta);
+        if let Some(unsynced_log) = prom.log_unsync {
+            self.set_unsynced_log(from, unsynced_log);
+        }
         let num_promised = self
             .promises_meta
             .iter()
@@ -168,6 +266,10 @@ where
 
     pub fn get_max_promise_meta(&self) -> &PromiseMetaData {
         &self.max_promise_meta
+    }
+
+    pub fn get_max_promise_accepted_hash(&self) -> &DOMHash {
+        &self.max_promise_accepted_hash
     }
 
     pub fn get_max_decided_idx(&self) -> usize {
@@ -261,6 +363,80 @@ where
             .filter(|la| **la >= idx)
             .count();
         self.quorum.is_accept_quorum(num_accepted)
+    }
+
+    pub fn set_unsynced_log(&mut self, pid: NodeId, unsynced_log:HashMap<usize, UnsyncedLogEntry<T>>) {
+        let id = Self::pid_to_idx(pid);
+        if id < self.unsynced_log_store.len() {
+            self.unsynced_log_store[id] = unsynced_log;
+        } else {
+            // If idx is out of bounds, we can choose to either ignore it or handle it as needed.
+            // For now, we'll just ignore it.
+        }
+    }
+
+    pub fn get_unsynced_log_store(&self) -> &Vec<HashMap<usize, UnsyncedLogEntry<T>>> {
+        &self.unsynced_log_store
+    }
+
+    pub fn push_pending_accept_meta(&mut self, meta: AcceptedEntryMeta) {
+        self.pending_accept_meta.push_back(meta);
+    }
+
+    pub fn take_pending_accept_meta(&mut self, count: usize) -> Vec<AcceptedEntryMeta> {
+        assert!(
+            self.pending_accept_meta.len() >= count,
+            "missing pending accept metadata"
+        );
+        self.pending_accept_meta.drain(..count).collect()
+    }
+
+    /// Returns [(entry_id, entry, count), ...] for all entries in the unsynced log store with the idx = `entry_idx` and prev_hash = `prev_hash`.
+    pub fn get_matched_unsynced_entries(
+        &self,
+        entry_idx: usize,
+        prefix_hash: DOMHash,
+    ) -> Vec<(DOMHash, EntryId, T, usize)>
+    {
+        let mut counts: HashMap<DOMHash, usize> = HashMap::new();
+        let mut entry_map: HashMap<DOMHash, (EntryId, T)> = HashMap::new();
+
+        for unsynced_log in &self.unsynced_log_store {
+            if let Some(unsynced_entry) = unsynced_log.get(&entry_idx) {
+                if unsynced_entry.prefix_hash == prefix_hash {
+                    *counts.entry(unsynced_entry.entry_hash).or_insert(0) += 1;
+                    entry_map.insert(unsynced_entry.entry_hash, (unsynced_entry.entry_id, unsynced_entry.entry.clone()));
+                }
+            }
+        }
+
+        counts.into_iter().map(|(entry_hash, count)| (entry_hash, entry_map[&entry_hash].0, entry_map[&entry_hash].1.clone(), count)).collect()
+    }
+
+    pub fn set_accepted_map(&mut self, idx: usize, entry: T, entry_hash: DOMHash, prefix_hash: DOMHash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {
+        let accepted_entry = self.accepted_map.entry(idx).or_insert_with(|| AcceptedMapEntry {
+            entry,
+            entry_hash,
+            prefix_hash: prefix_hash.clone(),
+            fast: HashMap::new(),
+            slow: HashSet::new(),
+        });
+
+        if is_fast_path {
+            accepted_entry
+                .fast
+                .entry((prefix_hash, entry_hash))
+                .or_insert_with(HashSet::new)
+                .insert(pid);
+        } else {
+            accepted_entry.slow.insert(pid);
+        }
+        accepted_entry.clone()
+    }
+
+    /// Prunes the accepted map up to the decided index.
+    pub fn prune_accepted_map(&mut self, decided_idx: usize) {
+        self.accepted_map.retain(|&idx, _| idx > decided_idx);
     }
 }
 
@@ -518,13 +694,14 @@ pub(crate) struct AcceptedMetaData<T: Entry> {
 mod tests {
     use super::*; // Import functions and types from this module
     use crate::storage::NoSnapshot;
+
+    impl Entry for () {
+        type Snapshot = NoSnapshot;
+    }
+
     #[test]
     fn preparable_peers_test() {
         type Value = ();
-
-        impl Entry for Value {
-            type Snapshot = NoSnapshot;
-        }
 
         let nodes = vec![6, 7, 8];
         let quorum = Quorum::Majority(2);
@@ -541,5 +718,34 @@ mod tests {
             LeaderState::<Value>::with(Ballot::with(1, 1, 1, max_pid), max_pid as usize, quorum);
         let prep_peers = leader_state.get_preparable_peers(&nodes);
         assert_eq!(prep_peers, nodes);
+    }
+
+    #[test]
+    fn pending_accept_meta_queue_preserves_order() {
+        type Value = ();
+
+        let quorum = Quorum::Majority(2);
+        let mut leader_state =
+            LeaderState::<Value>::with(Ballot::with(1, 1, 1, 3), 3, quorum);
+        let meta_1 = AcceptedEntryMeta {
+            entry_id: EntryId {
+                client_id: 7,
+                command_id: 1,
+            },
+            deadline: 11,
+        };
+        let meta_2 = AcceptedEntryMeta {
+            entry_id: EntryId {
+                client_id: 7,
+                command_id: 2,
+            },
+            deadline: 12,
+        };
+
+        leader_state.push_pending_accept_meta(meta_1);
+        leader_state.push_pending_accept_meta(meta_2);
+
+        assert_eq!(leader_state.take_pending_accept_meta(1), vec![meta_1]);
+        assert_eq!(leader_state.take_pending_accept_meta(1), vec![meta_2]);
     }
 }

@@ -55,7 +55,7 @@ where
             entry,
         }
     }
-    
+
     fn get_deadline(&self, time: i64) -> i64 {
         // TODO do we need this to be more pessimistic? E.g. deadline = OWD + uncertainty
         time + self.outgoing_owd_estimates.get_max_owd()
@@ -89,9 +89,9 @@ where
             prop.sent_time.1,
             received_time.1,
         );
-        
+
         self.incoming_owd_estimates.update(prop.sender, owd_sample);
-        
+
         let ack = DomAck {
             sender: self.pid,
             estimated_owd: self.incoming_owd_estimates.estimate_for(prop.sender),
@@ -133,5 +133,19 @@ where
     /// Handles a DOM ack.
     pub(crate) fn handle_dom_ack(&mut self, ack: DomAck) {
         self.outgoing_owd_estimates.update(ack.sender, ack.estimated_owd);
+    }
+
+    /// Removes the proposal with the given entry id from the buffers. Returns the proposal if it was found in any of the buffers.
+    pub(crate) fn remove_from_buffers(&mut self, entry_id: EntryId) -> Option<DomPropose<T>> {
+        if let Some(prop) = self.eb.remove(entry_id) {
+            Some(prop)
+        } else {
+            self.lb.remove(entry_id)
+        }
+    }
+
+    /// Clear late buffer. 
+    pub(crate) fn clear_late_buffer(&mut self) {
+        self.lb.clear();
     }
 }

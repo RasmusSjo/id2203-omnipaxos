@@ -41,6 +41,8 @@ where
                 decided_idx: self.internal_storage.get_decided_idx(),
                 accepted_idx,
                 log_sync,
+                log_unsync: Some(self.unsynced_log.clone()),
+                log_prefix_hash: self.accepted_prefix_hash,
             };
             self.cached_promise_message = Some(promise.clone());
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
@@ -54,12 +56,15 @@ where
     pub(crate) fn handle_acceptsync(&mut self, accsync: AcceptSync<T>, from: NodeId) {
         if self.check_valid_ballot(accsync.n) && self.state == (Role::Follower, Phase::Prepare) {
             self.cached_promise_message = None;
+                
             let new_accepted_idx = self
                 .internal_storage
                 .sync_log(accsync.n, accsync.decided_idx, Some(accsync.log_sync))
                 .expect(WRITE_ERROR_MSG);
+            self.accepted_prefix_hash = accsync.log_prefix_hash;
             if self.internal_storage.get_stopsign().is_none() {
-                self.forward_buffered_proposals();
+                // I think we use DOM instead of buffer.
+                // self.forward_buffered_proposals();
             }
             let accepted = Accepted {
                 n: accsync.n,
@@ -69,6 +74,12 @@ where
             self.current_seq_num = accsync.seq_num;
             let cached_idx = self.outgoing.len();
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
+            self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
+            self.unsynced_hash = DOMHash::default();
+            self.dom.clear_late_buffer();
+            // Do we need to clear buffered proposals that are now included in the log sync?
+            // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted. 
+
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
                 to: from,
@@ -79,38 +90,76 @@ where
         }
     }
 
-    fn forward_buffered_proposals(&mut self) {
-        let proposals = std::mem::take(&mut self.buffered_proposals);
-        if !proposals.is_empty() {
-            self.forward_proposals(proposals);
-        }
-    }
+    // fn forward_buffered_proposals(&mut self) {
+    //     let proposals = std::mem::take(&mut self.buffered_proposals);
+    //     if !proposals.is_empty() {
+    //         self.forward_proposals(proposals);
+    //     }
+    // }
 
     pub(crate) fn handle_acceptdecide(&mut self, acc_dec: AcceptDecide<T>) {
         if self.check_valid_ballot(acc_dec.n)
             && self.state == (Role::Follower, Phase::Accept)
             && self.handle_sequence_num(acc_dec.seq_num, acc_dec.n.pid) == MessageStatus::Expected
         {
+            let base_idx = self.internal_storage.get_accepted_idx() + 1;
+            let ballot = acc_dec.n;
+            let decided_idx = acc_dec.decided_idx;
+            let entry_meta = acc_dec.entry_meta;
+            let log_prefix_hash = acc_dec.log_prefix_hash;
             #[cfg(not(feature = "unicache"))]
             let entries = acc_dec.entries;
             #[cfg(feature = "unicache")]
             let entries = self.internal_storage.decode_entries(acc_dec.entries);
+            debug_assert_eq!(entry_meta.len(), entries.len());
+            self.cleanup_fast_path_metadata(base_idx, &entry_meta);
             let mut new_accepted_idx = self
                 .internal_storage
                 .append_entries_and_get_accepted_idx(entries)
                 .expect(WRITE_ERROR_MSG);
+            // Update accepted prefix hash after appending entries
+            self.accepted_prefix_hash = log_prefix_hash;
+
             let flushed_after_decide =
-                self.update_decided_idx_and_get_accepted_idx(acc_dec.decided_idx);
+                self.update_decided_idx_and_get_accepted_idx(decided_idx);
             if flushed_after_decide.is_some() {
                 new_accepted_idx = flushed_after_decide;
             }
             if let Some(idx) = new_accepted_idx {
-                self.reply_accepted(acc_dec.n, idx);
+                self.reply_accepted(ballot, idx);
             }
         }
     }
 
-    pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
+    fn cleanup_fast_path_metadata(
+        &mut self,
+        base_idx: usize,
+        entry_meta: &[AcceptedEntryMeta],
+    ) {
+        let mut mismatch = false;
+
+        for (offset, meta) in entry_meta.iter().enumerate() {
+            let idx = base_idx + offset;
+            let expected_hash = DOMHash::with(meta.entry_id, meta.deadline);
+            let matches_unsynced = self.unsynced_log.get(&idx).is_some_and(|entry| {
+                entry.entry_id == meta.entry_id && entry.entry_hash == expected_hash
+            });
+
+            if matches_unsynced {
+                self.unsynced_log.remove(&idx);
+                self.unsynced_hash.extend_hash(&expected_hash);
+            } else {
+                mismatch = true;
+            }
+
+            self.dom.remove_from_buffers(meta.entry_id);
+        }
+
+        if mismatch {
+            self.unsynced_log.clear();
+            self.unsynced_hash = DOMHash::default();
+        }
+    }
 
     pub(crate) fn handle_accept_stopsign(&mut self, acc_ss: AcceptStopSign) {
         if self.check_valid_ballot(acc_ss.n)

@@ -112,6 +112,21 @@ impl<T: Entry> EarlyBuffer<T> {
             None
         }
     }
+
+    pub(crate) fn remove(&mut self, entry_id: EntryId) -> Option<DomPropose<T>> {
+        // This is inefficient, but we expect the early buffer to be small.
+        let mut removed = None;
+        let mut new_heap = BinaryHeap::new();
+        while let Some(entry) = self.heap.pop() {
+            if entry.proposal.entry_id == entry_id {
+                removed = Some(entry.proposal);
+            } else {
+                new_heap.push(entry);
+            }
+        }
+        self.heap = new_heap;
+        removed
+    }
 }
 
 /// Error signalling something went wrong when inserting a request into the early buffer.
@@ -154,5 +169,10 @@ impl<T: Entry> LateBuffer<T> {
     /// Removes the proposal from the buffer if it exists, and if so, returns it.
     pub(crate) fn remove(&mut self, key: EntryId) -> Option<DomPropose<T>> {
         self.hash_map.remove(&key)
+    }
+
+    /// Clears the buffer.
+    pub(crate) fn clear(&mut self) {
+        self.hash_map.clear();
     }
 }

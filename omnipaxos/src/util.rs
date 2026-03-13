@@ -1,6 +1,6 @@
 use super::{
     ballot_leader_election::Ballot,
-    messages::sequence_paxos::{Promise, EntryId},
+    messages::sequence_paxos::{AcceptedEntryMeta, Promise, EntryId},
     storage::{Entry, SnapshotType, StopSign},
 };
 #[cfg(feature = "serde")]
@@ -10,7 +10,7 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     hash::{Hash, Hasher, DefaultHasher},
 };
 
@@ -179,6 +179,7 @@ where
     accepted_map: HashMap<usize, AcceptedMapEntry<T>>,
     /// unsynced_log_store\[pid\]\[idx\] = the unsynced log entry with index idx from the follower with id pid
     unsynced_log_store: Vec<HashMap<usize, UnsyncedLogEntry<T>>>,
+    pending_accept_meta: VecDeque<AcceptedEntryMeta>,
 }
 
 impl<T> LeaderState<T>
@@ -199,6 +200,7 @@ where
             quorum,
             accepted_map: HashMap::new(),
             unsynced_log_store: vec![HashMap::new(); max_pid],
+            pending_accept_meta: VecDeque::new(),
         }
     }
 
@@ -373,6 +375,18 @@ where
 
     pub fn get_unsynced_log_store(&self) -> &Vec<HashMap<usize, UnsyncedLogEntry<T>>> {
         &self.unsynced_log_store
+    }
+
+    pub fn push_pending_accept_meta(&mut self, meta: AcceptedEntryMeta) {
+        self.pending_accept_meta.push_back(meta);
+    }
+
+    pub fn take_pending_accept_meta(&mut self, count: usize) -> Vec<AcceptedEntryMeta> {
+        assert!(
+            self.pending_accept_meta.len() >= count,
+            "missing pending accept metadata"
+        );
+        self.pending_accept_meta.drain(..count).collect()
     }
 
     /// Returns [(entry_id, entry, count), ...] for all entries in the unsynced log store with the idx = `entry_idx` and prev_hash = `prev_hash`.
@@ -672,13 +686,14 @@ pub(crate) struct AcceptedMetaData<T: Entry> {
 mod tests {
     use super::*; // Import functions and types from this module
     use crate::storage::NoSnapshot;
+
+    impl Entry for () {
+        type Snapshot = NoSnapshot;
+    }
+
     #[test]
     fn preparable_peers_test() {
         type Value = ();
-
-        impl Entry for Value {
-            type Snapshot = NoSnapshot;
-        }
 
         let nodes = vec![6, 7, 8];
         let quorum = Quorum::Majority(2);
@@ -695,5 +710,34 @@ mod tests {
             LeaderState::<Value>::with(Ballot::with(1, 1, 1, max_pid), max_pid as usize, quorum);
         let prep_peers = leader_state.get_preparable_peers(&nodes);
         assert_eq!(prep_peers, nodes);
+    }
+
+    #[test]
+    fn pending_accept_meta_queue_preserves_order() {
+        type Value = ();
+
+        let quorum = Quorum::Majority(2);
+        let mut leader_state =
+            LeaderState::<Value>::with(Ballot::with(1, 1, 1, 3), 3, quorum);
+        let meta_1 = AcceptedEntryMeta {
+            entry_id: EntryId {
+                client_id: 7,
+                command_id: 1,
+            },
+            deadline: 11,
+        };
+        let meta_2 = AcceptedEntryMeta {
+            entry_id: EntryId {
+                client_id: 7,
+                command_id: 2,
+            },
+            deadline: 12,
+        };
+
+        leader_state.push_pending_accept_meta(meta_1);
+        leader_state.push_pending_accept_meta(meta_2);
+
+        assert_eq!(leader_state.take_pending_accept_meta(1), vec![meta_1]);
+        assert_eq!(leader_state.take_pending_accept_meta(1), vec![meta_2]);
     }
 }

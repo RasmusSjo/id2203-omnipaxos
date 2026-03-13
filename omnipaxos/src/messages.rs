@@ -106,6 +106,8 @@ pub mod sequence_paxos {
         #[cfg(not(feature = "unicache"))]
         /// Entries to be replicated.
         pub entries: Vec<T>,
+        /// DOM metadata for each entry in `entries`, in the same order.
+        pub entry_meta: Vec<AcceptedEntryMeta>,
         /// The hash value for the log prefix up to the entries in `entries`.
         pub log_prefix_hash: DOMHash,
         #[cfg(feature = "unicache")]
@@ -121,6 +123,16 @@ pub mod sequence_paxos {
         pub n: Ballot,
         /// The accepted index.
         pub accepted_idx: usize,
+    }
+
+    /// DOM metadata for a log entry replicated via `AcceptDecide`.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    pub struct AcceptedEntryMeta {
+        /// The unique id of the client request.
+        pub entry_id: EntryId,
+        /// The deadline assigned by DOM.
+        pub deadline: i64,
     }
 
     /// FastAccepted message

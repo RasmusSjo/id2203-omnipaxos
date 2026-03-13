@@ -14,7 +14,7 @@ pub mod utils;
 
 use crate::utils::StorageType;
 #[cfg(not(feature = "unicache"))]
-use omnipaxos::messages::sequence_paxos::{AcceptDecide, Compaction};
+use omnipaxos::messages::sequence_paxos::{AcceptDecide, AcceptedEntryMeta, Compaction, EntryId};
 #[cfg(feature = "unicache")]
 use omnipaxos::storage::Entry;
 #[cfg(feature = "unicache")]
@@ -35,6 +35,19 @@ use utils::{BrokenStorageConfig, TestConfig, Value, ValueSnapshot};
 type MemoryStore = Arc<Mutex<MemoryStorage<Value>>>;
 type BrokenStore = Arc<Mutex<BrokenStorageConfig>>;
 type TestOmniPaxos = OmniPaxos<'static, Value, StorageType<Value>, SystemClock>;
+
+#[cfg(not(feature = "unicache"))]
+fn accept_entry_meta(num_entries: usize) -> Vec<AcceptedEntryMeta> {
+    (0..num_entries)
+        .map(|idx| AcceptedEntryMeta {
+            entry_id: EntryId {
+                client_id: 1,
+                command_id: idx,
+            },
+            deadline: (idx*1000) as i64,
+        })
+        .collect()
+}
 
 /// Creates a new OmniPaxos instance with `BrokenStorage` in its initial state.
 /// Also returns an `Arc<Mutex<_>>` pointer to the underlying `MemoryStorage` and
@@ -293,6 +306,7 @@ fn atomic_storage_trim_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                entry_meta: accept_entry_meta(6),
                 // TODO: make this hash non-default since we have suffix entries
                 log_prefix_hash: DOMHash::default(),
             }),
@@ -359,6 +373,7 @@ fn atomic_storage_snapshot_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                entry_meta: accept_entry_meta(6),
                 // TODO: make this hash non-default since we have suffix entries
                 log_prefix_hash: DOMHash::default(),
             }),
@@ -439,6 +454,7 @@ fn atomic_storage_accept_decide_test() {
                     Value::with_id(5),
                     Value::with_id(6),
                 ],
+                entry_meta: accept_entry_meta(6),
                 // TODO: make this hash non-default since we have suffix entries
                 log_prefix_hash: DOMHash::default(),
             }),

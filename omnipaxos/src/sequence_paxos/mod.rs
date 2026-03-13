@@ -5,7 +5,7 @@ use crate::{
     messages::Message,
     storage::{
         internal_storage::{InternalStorage, InternalStorageConfig},
-        Entry, Snapshot, StopSign, Storage, StorageResult,
+        Entry, Snapshot, StopSign, Storage,
     },
     util::{
         FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
@@ -275,6 +275,10 @@ where
                 // prevHash = Hash(synced-log)
                 let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
                 self.accepted_prefix_hash.extend_hash(&entry_hash);
+                self.leader_state.push_pending_accept_meta(AcceptedEntryMeta {
+                    entry_id: prop.entry_id,
+                    deadline: prop.deadline,
+                });
 
                 self.leader_state.set_accepted_map(
                     self.leader_state.get_accepted_idx(self.pid) + 1, 

@@ -262,12 +262,16 @@ where
 
     fn send_acceptdecide(&mut self, accepted: AcceptedMetaData<T>) {
         let decided_idx = self.internal_storage.get_decided_idx();
+        let entry_meta = self
+            .leader_state
+            .take_pending_accept_meta(accepted.entries.len());
         for pid in self.leader_state.get_promised_followers() {
             let latest_accdec = self.get_latest_accdec_message(pid);
             match latest_accdec {
                 // Modify existing AcceptDecide message to follower
                 Some(accdec) => {
                     accdec.entries.extend(accepted.entries.iter().cloned());
+                    accdec.entry_meta.extend(entry_meta.iter().copied());
                     accdec.decided_idx = decided_idx;
                 }
                 // Add new AcceptDecide message to follower
@@ -279,6 +283,7 @@ where
                         seq_num: self.leader_state.next_seq_num(pid),
                         decided_idx,
                         entries: accepted.entries.clone(),
+                        entry_meta: entry_meta.clone(),
                         log_prefix_hash: self.accepted_prefix_hash,
                     };
                     self.outgoing.push(Message::SequencePaxos(PaxosMessage {

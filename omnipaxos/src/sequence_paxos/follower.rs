@@ -100,27 +100,62 @@ where
             && self.state == (Role::Follower, Phase::Accept)
             && self.handle_sequence_num(acc_dec.seq_num, acc_dec.n.pid) == MessageStatus::Expected
         {
-            // TODO: For Accept, remove entries from unsynced log and update unsynced hash. Update accepted prefix hash.
-            // TODO: Also, if the accepted entries are different from the entries in the unsynced log, we should clear the unsynced log and update the unsynced hash.
+            let base_idx = self.internal_storage.get_accepted_idx() + 1;
+            let ballot = acc_dec.n;
+            let decided_idx = acc_dec.decided_idx;
+            let entry_meta = acc_dec.entry_meta;
+            let log_prefix_hash = acc_dec.log_prefix_hash;
             #[cfg(not(feature = "unicache"))]
             let entries = acc_dec.entries;
             #[cfg(feature = "unicache")]
             let entries = self.internal_storage.decode_entries(acc_dec.entries);
+            debug_assert_eq!(entry_meta.len(), entries.len());
+            self.cleanup_fast_path_metadata(base_idx, &entry_meta);
             let mut new_accepted_idx = self
                 .internal_storage
                 .append_entries_and_get_accepted_idx(entries)
                 .expect(WRITE_ERROR_MSG);
             // Update accepted prefix hash after appending entries
-            self.accepted_prefix_hash = acc_dec.log_prefix_hash;
+            self.accepted_prefix_hash = log_prefix_hash;
 
             let flushed_after_decide =
-                self.update_decided_idx_and_get_accepted_idx(acc_dec.decided_idx);
+                self.update_decided_idx_and_get_accepted_idx(decided_idx);
             if flushed_after_decide.is_some() {
                 new_accepted_idx = flushed_after_decide;
             }
             if let Some(idx) = new_accepted_idx {
-                self.reply_accepted(acc_dec.n, idx);
+                self.reply_accepted(ballot, idx);
             }
+        }
+    }
+
+    fn cleanup_fast_path_metadata(
+        &mut self,
+        base_idx: usize,
+        entry_meta: &[AcceptedEntryMeta],
+    ) {
+        let mut mismatch = false;
+
+        for (offset, meta) in entry_meta.iter().enumerate() {
+            let idx = base_idx + offset;
+            let expected_hash = DOMHash::with(meta.entry_id, meta.deadline);
+            let matches_unsynced = self.unsynced_log.get(&idx).is_some_and(|entry| {
+                entry.entry_id == meta.entry_id && entry.entry_hash == expected_hash
+            });
+
+            if matches_unsynced {
+                self.unsynced_log.remove(&idx);
+                self.unsynced_hash.extend_hash(&expected_hash);
+            } else {
+                mismatch = true;
+            }
+
+            self.dom.remove_from_buffers(meta.entry_id);
+        }
+
+        if mismatch {
+            self.unsynced_log.clear();
+            self.unsynced_hash = DOMHash::default();
         }
     }
 

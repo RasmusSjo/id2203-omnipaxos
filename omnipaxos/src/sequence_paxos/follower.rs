@@ -63,7 +63,8 @@ where
                 .expect(WRITE_ERROR_MSG);
             self.accepted_prefix_hash = accsync.log_prefix_hash;
             if self.internal_storage.get_stopsign().is_none() {
-                self.forward_buffered_proposals();
+                // I think we use DOM instead of buffer.
+                // self.forward_buffered_proposals();
             }
             let accepted = Accepted {
                 n: accsync.n,
@@ -87,12 +88,12 @@ where
         }
     }
 
-    fn forward_buffered_proposals(&mut self) {
-        let proposals = std::mem::take(&mut self.buffered_proposals);
-        if !proposals.is_empty() {
-            self.forward_proposals(proposals);
-        }
-    }
+    // fn forward_buffered_proposals(&mut self) {
+    //     let proposals = std::mem::take(&mut self.buffered_proposals);
+    //     if !proposals.is_empty() {
+    //         self.forward_proposals(proposals);
+    //     }
+    // }
 
     pub(crate) fn handle_acceptdecide(&mut self, acc_dec: AcceptDecide<T>) {
         if self.check_valid_ballot(acc_dec.n)

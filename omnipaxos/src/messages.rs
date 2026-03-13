@@ -250,8 +250,9 @@ pub mod sequence_paxos {
         FastAccepted(FastAccepted<T>),
         NotAccepted(NotAccepted),
         Decide(Decide),
-        /// Forward client proposals to the leader.
-        ProposalForward(Vec<T>),
+        // We use the DOM instead of forwarding client proposals
+        // /// Forward client proposals to the leader.
+        // ProposalForward(Vec<T>),
         Compaction(Compaction),
         AcceptStopSign(AcceptStopSign),
         ForwardStopSign(StopSign),

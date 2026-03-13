@@ -397,7 +397,7 @@ where
         counts.into_iter().map(|(entry_hash, count)| (entry_hash, entry_map[&entry_hash].0, entry_map[&entry_hash].1.clone(), count)).collect()
     }
 
-    pub fn set_accepted_map(&mut self, idx: usize, entry: T, prefix_hash: DOMHash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {
+    pub fn set_accepted_map(&mut self, idx: usize, entry: T, entry_hash: DOMHash, prefix_hash: DOMHash, pid: NodeId, is_fast_path: bool) -> AcceptedMapEntry<T> {
         let accepted_entry = self.accepted_map.entry(idx).or_insert_with(|| AcceptedMapEntry {
             entry,
             prefix_hash: prefix_hash.clone(),
@@ -408,7 +408,7 @@ where
         if is_fast_path {
             accepted_entry
                 .fast
-                .entry((prefix_hash, accepted_entry.prefix_hash.clone()))
+                .entry((prefix_hash, entry_hash))
                 .or_insert_with(HashSet::new)
                 .insert(pid);
         } else {

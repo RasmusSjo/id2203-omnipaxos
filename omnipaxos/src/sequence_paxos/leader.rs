@@ -78,15 +78,15 @@ where
         }
     }
 
-    pub(crate) fn handle_forwarded_proposal(&mut self, mut entries: Vec<T>) {
-        if !self.accepted_reconfiguration() {
-            match self.state {
-                (Role::Leader, Phase::Prepare) => self.buffered_proposals.append(&mut entries),
-                (Role::Leader, Phase::Accept) => self.accept_entries_leader(entries),
-                _ => self.forward_proposals(entries),
-            }
-        }
-    }
+    // pub(crate) fn handle_forwarded_proposal(&mut self, mut entries: Vec<T>) {
+    //     if !self.accepted_reconfiguration() {
+    //         match self.state {
+    //             (Role::Leader, Phase::Prepare) => self.buffered_proposals.append(&mut entries),
+    //             (Role::Leader, Phase::Accept) => self.accept_entries_leader(entries),
+    //             _ => self.forward_proposals(entries),
+    //         }
+    //     }
+    // }
 
     pub(crate) fn handle_forwarded_stopsign(&mut self, ss: StopSign) {
         if self.accepted_reconfiguration() {
@@ -114,7 +114,8 @@ where
             .set_accepted_map(
                 fast_acc.idx, 
                 fast_acc.entry.clone(), 
-                fast_acc.prefix_hash.clone(), 
+                fast_acc.entry_hash,
+                fast_acc.prefix_hash, 
                 from, 
                 true
             );

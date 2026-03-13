@@ -279,6 +279,7 @@ where
                 self.leader_state.set_accepted_map(
                     self.leader_state.get_accepted_idx(self.pid) + 1, 
                     prop.entry.clone(), 
+                    entry_hash,
                     self.accepted_prefix_hash.clone(), 
                     self.pid, 
                     false
@@ -375,7 +376,7 @@ where
             PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
             PaxosMsg::FastAccepted(fast_acc) => self.handle_fast_accepted(fast_acc, m.from),
             PaxosMsg::Decide(d) => self.handle_decide(d),
-            PaxosMsg::ProposalForward(proposals) => self.handle_forwarded_proposal(proposals),
+            // PaxosMsg::ProposalForward(proposals) => self.handle_forwarded_proposal(proposals),
             PaxosMsg::Compaction(c) => self.handle_compaction(c),
             PaxosMsg::AcceptStopSign(acc_ss) => self.handle_accept_stopsign(acc_ss),
             PaxosMsg::ForwardStopSign(f_ss) => self.handle_forwarded_stopsign(f_ss),
@@ -398,14 +399,14 @@ where
     }
 
     /// Append an entry to the replicated log.
-    pub(crate) fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
-        if self.accepted_reconfiguration() {
-            Err(ProposeErr::PendingReconfigEntry(entry))
-        } else {
-            self.propose_entry(entry);
-            Ok(())
-        }
-    }
+    // pub(crate) fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
+    //     if self.accepted_reconfiguration() {
+    //         Err(ProposeErr::PendingReconfigEntry(entry))
+    //     } else {
+    //         self.propose_entry(entry);
+    //         Ok(())
+    //     }
+    // }
 
     /// Append an entry with an id to the replicated log.
     pub(crate) fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
@@ -498,32 +499,32 @@ where
         }));
     }
 
-    fn propose_entry(&mut self, entry: T) {
-        match self.state {
-            (Role::Leader, Phase::Prepare) => self.buffered_proposals.push(entry),
-            (Role::Leader, Phase::Accept) => self.accept_entry_leader(entry),
-            _ => self.forward_proposals(vec![entry]),
-        }
-    }
+    // fn propose_entry(&mut self, entry: T) {
+    //     match self.state {
+    //         (Role::Leader, Phase::Prepare) => self.buffered_proposals.push(entry),
+    //         (Role::Leader, Phase::Accept) => self.accept_entry_leader(entry),
+    //         _ => self.forward_proposals(vec![entry]),
+    //     }
+    // }
 
     pub(crate) fn get_leader_state(&self) -> &LeaderState<T> {
         &self.leader_state
     }
 
-    pub(crate) fn forward_proposals(&mut self, mut entries: Vec<T>) {
-        let leader = self.get_current_leader();
-        if leader > 0 && self.pid != leader {
-            let pf = PaxosMsg::ProposalForward(entries);
-            let msg = Message::SequencePaxos(PaxosMessage {
-                from: self.pid,
-                to: leader,
-                msg: pf,
-            });
-            self.outgoing.push(msg);
-        } else {
-            self.buffered_proposals.append(&mut entries);
-        }
-    }
+    // pub(crate) fn forward_proposals(&mut self, mut entries: Vec<T>) {
+    //     let leader = self.get_current_leader();
+    //     if leader > 0 && self.pid != leader {
+    //         let pf = PaxosMsg::ProposalForward(entries);
+    //         let msg = Message::SequencePaxos(PaxosMessage {
+    //             from: self.pid,
+    //             to: leader,
+    //             msg: pf,
+    //         });
+    //         self.outgoing.push(msg);
+    //     } else {
+    //         self.buffered_proposals.append(&mut entries);
+    //     }
+    // }
 
     pub(crate) fn forward_stopsign(&mut self, ss: StopSign) {
         let leader = self.get_current_leader();

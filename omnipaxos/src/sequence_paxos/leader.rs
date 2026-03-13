@@ -126,10 +126,14 @@ where
         let fast_quorum = f + (f + 1) / 2 + 1;
         let slow_quorum = f + 1;
 
-        // collect all fast voters across all keys
-        let fast_voters: Set<NodeId> = entry.fast.values().flatten().cloned().collect();
+        let leader_candidate = (entry.prefix_hash, entry.entry_hash);
+        let fast_voters: Set<NodeId> = entry
+            .fast
+            .get(&leader_candidate)
+            .cloned()
+            .unwrap_or_default();
 
-        // Union(acceptedMap<idx>.fast, acceptedMap<idx>.slow)
+        // Only count fast-path votes for the leader's current candidate at this index.
         let combined: Set<NodeId> = fast_voters.union(&entry.slow).cloned().collect();
 
         // Check fast quorum (f + ceil(f/2) + 1)
@@ -140,7 +144,7 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
-
+            self.leader_state.prune_accepted_map(decided_idx);
             //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
@@ -156,6 +160,7 @@ where
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
+            self.leader_state.prune_accepted_map(decided_idx);
             // send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
@@ -375,6 +380,7 @@ where
             expected_prev_hash.extend_hash(&e.0);
             recovered_idx = new_accepted_idx + 1;
         }
+        self.accepted_prefix_hash = expected_prev_hash;
 
         // Remove entries from unsynced logs that are duplicated in synced-log
         self.unsynced_log.retain(|idx, entry| {
@@ -468,6 +474,7 @@ where
                 self.internal_storage
                     .set_decided_idx(decided_idx)
                     .expect(WRITE_ERROR_MSG);
+                self.leader_state.prune_accepted_map(decided_idx);
                 for pid in self.leader_state.get_promised_followers() {
                     let latest_accdec = self.get_latest_accdec_message(pid);
                     match latest_accdec {

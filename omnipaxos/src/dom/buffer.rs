@@ -170,4 +170,9 @@ impl<T: Entry> LateBuffer<T> {
     pub(crate) fn remove(&mut self, key: EntryId) -> Option<DomPropose<T>> {
         self.hash_map.remove(&key)
     }
+
+    /// Clears the buffer.
+    pub(crate) fn clear(&mut self) {
+        self.hash_map.clear();
+    }
 }

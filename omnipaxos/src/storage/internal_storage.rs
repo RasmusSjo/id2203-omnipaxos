@@ -1,8 +1,10 @@
 use super::state_cache::StateCache;
 use crate::{
     ballot_leader_election::Ballot,
-    storage::{Entry, Snapshot, SnapshotType, StopSign, Storage, StorageOp, StorageResult},
-    util::{AcceptedMetaData, IndexEntry, LogEntry, LogSync, SnapshottedEntry},
+    storage::{
+        Entry, Snapshot, SnapshotType, StopSign, Storage, StorageOp, StorageResult,
+    },
+    util::{AcceptedMetaData, IndexEntry, LogEntry, LogSync, SnapshottedEntry,},
     CompactionErr,
 };
 #[cfg(feature = "unicache")]

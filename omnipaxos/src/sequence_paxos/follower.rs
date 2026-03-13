@@ -41,6 +41,8 @@ where
                 decided_idx: self.internal_storage.get_decided_idx(),
                 accepted_idx,
                 log_sync,
+                log_unsync: Some(self.unsynced_log.clone()),
+                log_prefix_hash: self.accepted_prefix_hash,
             };
             self.cached_promise_message = Some(promise.clone());
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
@@ -54,12 +56,15 @@ where
     pub(crate) fn handle_acceptsync(&mut self, accsync: AcceptSync<T>, from: NodeId) {
         if self.check_valid_ballot(accsync.n) && self.state == (Role::Follower, Phase::Prepare) {
             self.cached_promise_message = None;
+                
             let new_accepted_idx = self
                 .internal_storage
                 .sync_log(accsync.n, accsync.decided_idx, Some(accsync.log_sync))
                 .expect(WRITE_ERROR_MSG);
+            self.accepted_prefix_hash = accsync.log_prefix_hash;
             if self.internal_storage.get_stopsign().is_none() {
-                self.forward_buffered_proposals();
+                // I think we use DOM instead of buffer.
+                // self.forward_buffered_proposals();
             }
             let accepted = Accepted {
                 n: accsync.n,
@@ -69,6 +74,10 @@ where
             self.current_seq_num = accsync.seq_num;
             let cached_idx = self.outgoing.len();
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
+            self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
+            // Do we need to clear buffered proposals that are now included in the log sync?
+            // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted. 
+
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
                 to: from,
@@ -79,18 +88,20 @@ where
         }
     }
 
-    fn forward_buffered_proposals(&mut self) {
-        let proposals = std::mem::take(&mut self.buffered_proposals);
-        if !proposals.is_empty() {
-            self.forward_proposals(proposals);
-        }
-    }
+    // fn forward_buffered_proposals(&mut self) {
+    //     let proposals = std::mem::take(&mut self.buffered_proposals);
+    //     if !proposals.is_empty() {
+    //         self.forward_proposals(proposals);
+    //     }
+    // }
 
     pub(crate) fn handle_acceptdecide(&mut self, acc_dec: AcceptDecide<T>) {
         if self.check_valid_ballot(acc_dec.n)
             && self.state == (Role::Follower, Phase::Accept)
             && self.handle_sequence_num(acc_dec.seq_num, acc_dec.n.pid) == MessageStatus::Expected
         {
+            // TODO: For Accept, remove entries from unsynced log and update unsynced hash. Update accepted prefix hash.
+            // TODO: Also, if the accepted entries are different from the entries in the unsynced log, we should clear the unsynced log and update the unsynced hash.
             #[cfg(not(feature = "unicache"))]
             let entries = acc_dec.entries;
             #[cfg(feature = "unicache")]
@@ -99,6 +110,9 @@ where
                 .internal_storage
                 .append_entries_and_get_accepted_idx(entries)
                 .expect(WRITE_ERROR_MSG);
+            // Update accepted prefix hash after appending entries
+            self.accepted_prefix_hash = acc_dec.log_prefix_hash;
+
             let flushed_after_decide =
                 self.update_decided_idx_and_get_accepted_idx(acc_dec.decided_idx);
             if flushed_after_decide.is_some() {
@@ -109,8 +123,6 @@ where
             }
         }
     }
-
-    pub(crate) fn handle_fastaccept(&mut self, acc_dec: FastAccept<T>) { }
 
     pub(crate) fn handle_accept_stopsign(&mut self, acc_ss: AcceptStopSign) {
         if self.check_valid_ballot(acc_ss.n)

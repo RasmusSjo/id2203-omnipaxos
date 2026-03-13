@@ -2,9 +2,10 @@ use super::super::{
     ballot_leader_election::Ballot,
     util::{LeaderState, PromiseMetaData},
 };
-use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG};
+use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG, DOMHash};
 
 use super::*;
+use std::collections::{HashSet};
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
@@ -37,8 +38,11 @@ where
                 decided_idx,
                 accepted_idx,
                 log_sync: None,
+                log_unsync: Some(self.unsynced_log.clone()),
+                log_prefix_hash: self.accepted_prefix_hash.clone(),
             };
             self.leader_state.set_promise(my_promise, self.pid, true);
+            self.leader_state.set_unsynced_log(self.pid, self.unsynced_log.clone());
             /* initialise longest chosen sequence and update state */
             self.state = (Role::Leader, Phase::Prepare);
             let prep = Prepare {
@@ -74,15 +78,15 @@ where
         }
     }
 
-    pub(crate) fn handle_forwarded_proposal(&mut self, mut entries: Vec<T>) {
-        if !self.accepted_reconfiguration() {
-            match self.state {
-                (Role::Leader, Phase::Prepare) => self.buffered_proposals.append(&mut entries),
-                (Role::Leader, Phase::Accept) => self.accept_entries_leader(entries),
-                _ => self.forward_proposals(entries),
-            }
-        }
-    }
+    // pub(crate) fn handle_forwarded_proposal(&mut self, mut entries: Vec<T>) {
+    //     if !self.accepted_reconfiguration() {
+    //         match self.state {
+    //             (Role::Leader, Phase::Prepare) => self.buffered_proposals.append(&mut entries),
+    //             (Role::Leader, Phase::Accept) => self.accept_entries_leader(entries),
+    //             _ => self.forward_proposals(entries),
+    //         }
+    //     }
+    // }
 
     pub(crate) fn handle_forwarded_stopsign(&mut self, ss: StopSign) {
         if self.accepted_reconfiguration() {
@@ -106,25 +110,19 @@ where
             return;
         }
 
-        // if acceptedMap<idx> is null then initialize acceptedMap<idx>
-        let entry = self
-            .accepted_map
-            .entry(fast_acc.idx)
-            .or_insert_with(|| AcceptedMapEntry {
-                entry: fast_acc.entry.clone(),
-                prev_hash: fast_acc.prev_hash.clone(),
-                fast: HashMap::new(),
-                slow: Set::new(),
-            });
-
-        // acceptedMap<idx>.fast<(entry.prevHash, entry.entryHash)>.append(f)
-        let entry_hash = fast_acc.idx.to_le_bytes().to_vec();
-        let key = (fast_acc.prev_hash.clone(), entry_hash);
-        entry.fast.entry(key).or_insert_with(Set::new).insert(from);
-
+        let entry = self.leader_state
+            .set_accepted_map(
+                fast_acc.idx, 
+                fast_acc.entry.clone(), 
+                fast_acc.entry_hash,
+                fast_acc.prefix_hash, 
+                from, 
+                true
+            );
+        
         // compute quorum sizes
         let num_nodes = self.peers.len() + 1;
-        let f = (num_nodes - 1) / 2;
+        let f = num_nodes / 2;
         let fast_quorum = f + (f + 1) / 2 + 1;
         let slow_quorum = f + 1;
 
@@ -250,6 +248,7 @@ where
             seq_num: self.leader_state.next_seq_num(to),
             decided_idx: self.get_decided_idx(),
             log_sync,
+            log_prefix_hash: self.accepted_prefix_hash,
             #[cfg(feature = "unicache")]
             unicache: self.internal_storage.get_unicache(),
         };
@@ -280,6 +279,7 @@ where
                         seq_num: self.leader_state.next_seq_num(pid),
                         decided_idx,
                         entries: accepted.entries.clone(),
+                        log_prefix_hash: self.accepted_prefix_hash,
                     };
                     self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                         from: self.pid,
@@ -324,14 +324,73 @@ where
             msg: PaxosMsg::Decide(d),
         }));
     }
-
+    
     fn handle_majority_promises(&mut self) {
         let max_promise_sync = self.leader_state.take_max_promise_sync();
         let decided_idx = self.leader_state.get_max_decided_idx();
+
+        // Update log and accepted_idx according to the highest accepted_idx among promises
         let mut new_accepted_idx = self
             .internal_storage
             .sync_log(self.leader_state.n_leader, decided_idx, max_promise_sync)
             .expect(WRITE_ERROR_MSG);
+        // Update log from unsynced log if necessary
+        let num_nodes = self.peers.len() + 1;
+        let f = num_nodes / 2;
+        let recover_threshold = (f + 1) / 2 + 1; // ceil(f/2) + 1
+
+        let mut expected_prev_hash = self.leader_state.get_max_promise_accepted_hash().clone();
+        let mut recovered_entry_ids: Set<EntryId> = HashSet::new();
+        let mut recovered_idx = new_accepted_idx + 1;
+        'recover: loop {
+            let entries_count = self
+                .leader_state
+                .get_matched_unsynced_entries(recovered_idx, expected_prev_hash.clone());
+            let mut winners = vec::Vec::<(DOMHash, EntryId, T)>::new();
+            for (e_hash, e_id, e, cnt) in entries_count {
+                if cnt >= recover_threshold {
+                    winners.push((e_hash, e_id, e));
+                }
+            }
+            if winners.is_empty() {
+                break 'recover;
+            }
+            if winners.len() >= 2 {
+                // collision: multiple candidates for same idx with enough votes.
+                break 'recover;
+            }
+            let e = winners.pop().unwrap();
+            recovered_entry_ids.insert(e.1);
+
+            new_accepted_idx = self
+                .internal_storage
+                .append_entries_without_batching(vec![e.2.clone()])
+                .expect(WRITE_ERROR_MSG);
+
+            expected_prev_hash.extend_hash(&e.0);
+            recovered_idx = new_accepted_idx + 1;
+        }
+
+        // Remove entries from unsynced logs that are duplicated in synced-log
+        self.unsynced_log.retain(|idx, entry| {
+            *idx > new_accepted_idx && !recovered_entry_ids.contains(&entry.entry_id)
+        });
+        // Also remove duplicates from early/late buffers once implemented.
+        for eid in recovered_entry_ids {
+            self.dom.remove_from_buffers(eid);
+        }
+
+        // Re-append the remaining unsynced entries to the DOM buffer to update their deadlines
+        let dom_props: Vec<_> = self
+            .unsynced_log
+            .values()
+            .map(|ulog| self.dom.create_dom_propose(ulog.entry.clone(), ulog.entry_id))
+            .collect();
+
+        for dom_prop in dom_props {
+            self.send_dom_propose(dom_prop);
+        }
+
         if !self.accepted_reconfiguration() {
             if !self.buffered_proposals.is_empty() {
                 let entries = std::mem::take(&mut self.buffered_proposals);

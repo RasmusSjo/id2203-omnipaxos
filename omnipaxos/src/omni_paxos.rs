@@ -352,10 +352,11 @@ where
         self.seq_paxos.is_reconfigured()
     }
 
-    /// Append an entry to the replicated log.
-    pub fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
-        self.seq_paxos.append(entry)
-    }
+    // We use the DOM instead of forwarding client proposals, so we use `append_with_id` instead of `append`.
+    // /// Append an entry to the replicated log.
+    // pub fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
+    //     self.seq_paxos.append(entry)
+    // }
 
     /// Append an entry with an id to the replicated log
     pub fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {

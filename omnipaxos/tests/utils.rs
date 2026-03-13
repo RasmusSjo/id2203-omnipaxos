@@ -3,7 +3,7 @@ use kompact::{config_keys::system, executors::crossbeam_workstealing_pool, prelu
 use omnipaxos::{
     ballot_leader_election::Ballot,
     macros::*,
-    messages::Message,
+    messages::{Message, sequence_paxos::EntryId},
     storage::{Entry, Snapshot, Storage, StorageResult},
     util::{FlexibleQuorum, NodeId, SystemClock, SYSTEM_CLOCK},
     ClusterConfig, OmniPaxosConfig, ServerConfig,
@@ -687,6 +687,7 @@ impl TestSystem {
     /// Use node `proposer` to propose `proposals` then waits for the proposals
     /// to be decided.
     pub fn make_proposals(&self, proposer: NodeId, proposals: Vec<Value>, timeout: Duration) {
+        let proposer_id = proposer;
         let proposer = self
             .nodes
             .get(&proposer)
@@ -696,12 +697,18 @@ impl TestSystem {
         proposer.on_definition(|x| {
             for v in proposals {
                 let (kprom, kfuture) = promise::<()>();
-                x.paxos.append(v.clone()).expect("Failed to append");
+                let prop = v.clone();
+                let id = EntryId {
+                    client_id: proposer_id,
+                    command_id: prop.id as usize,
+                };
+                x.paxos.append_with_id(prop, id).expect("Failed to append");
                 x.insert_decided_future(Ask::new(kprom, v));
                 proposal_futures.push(kfuture);
             }
         });
 
+    // pub fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
         match FutureCollection::collect_with_timeout::<Vec<_>>(proposal_futures, timeout) {
             Ok(_) => {}
             Err(e) => panic!("Error on collecting futures of decided proposals: {}", e),
@@ -953,6 +960,8 @@ impl Value {
             job: id.to_string(),
         }
     }
+
+    pub fn get_id(&self) -> usize { self.id as usize }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

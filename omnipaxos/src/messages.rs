@@ -199,7 +199,7 @@ pub mod sequence_paxos {
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
     pub struct EntryId {
         /// The id of the client
-        pub client_id: u64,
+        pub client_id: NodeId,
         /// The id of the client command
         pub command_id: CommandId,
     }

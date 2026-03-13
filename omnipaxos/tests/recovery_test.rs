@@ -1,7 +1,7 @@
 pub mod utils;
 
 use kompact::prelude::{promise, Ask, FutureCollection, KFuture};
-use omnipaxos::util::{LogEntry, NodeId};
+use omnipaxos::{messages::sequence_paxos::EntryId, util::{LogEntry, NodeId}};
 use serial_test::serial;
 use std::{thread, time::Duration};
 use utils::{verification::verify_log, StorageType, TestConfig, TestSystem, Value};
@@ -186,8 +186,13 @@ fn check_last_proposals(proposer: NodeId, recover: NodeId, sys: &TestSystem, cfg
         .collect();
 
     for v in proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         proposer_px.on_definition(|x| {
-            x.paxos.append(v).expect("Failed to append");
+            // x.paxos.append(v).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
     }
 

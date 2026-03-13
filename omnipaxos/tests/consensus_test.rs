@@ -3,6 +3,7 @@ pub mod utils;
 use kompact::prelude::{promise, Ask, FutureCollection};
 use omnipaxos::{
     storage::{Snapshot, StopSign, Storage},
+    messages::sequence_paxos::EntryId,
     ClusterConfig, OmniPaxosConfig,
 };
 use serial_test::serial;
@@ -22,10 +23,15 @@ fn consensus_test() {
     let mut futures = vec![];
     let vec_proposals = utils::create_proposals(1, cfg.num_proposals);
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         let (kprom, kfuture) = promise::<()>();
         first_node.on_definition(|x| {
             x.insert_decided_future(Ask::new(kprom, v.clone()));
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
         futures.push(kfuture);
     }

@@ -4,6 +4,7 @@ use crate::utils::STOPSIGN_ID;
 use kompact::prelude::{promise, Ask};
 use omnipaxos::{
     util::{LogEntry, NodeId},
+    messages::sequence_paxos::EntryId,
     ClusterConfig,
 };
 use serial_test::serial;
@@ -77,9 +78,14 @@ fn reconfig_test() {
 
     let pid = *decided_nodes.last().unwrap();
     let node = sys.nodes.get(pid).unwrap();
+    let v = Value::with_id(0);
+    let e = EntryId {
+        client_id: 1,
+        command_id: v.get_id(),
+    };
     node.on_definition(|x| {
         x.paxos
-            .append(Value::with_id(0))
+            .append_with_id(v, e)
             .expect_err("Should not be able to propose after decided StopSign!")
     });
 

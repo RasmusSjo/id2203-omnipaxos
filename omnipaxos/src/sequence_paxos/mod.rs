@@ -433,12 +433,12 @@ where
 
     fn send_dom_propose(&mut self, prop: DomPropose<T>) {
         // Broadcast message, include sending to self
-        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
-            from: self.pid,
-            to: self.pid,
-            msg: PaxosMsg::DomPropose(prop.clone()),
-        }));
-
+        // self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+        //     from: self.pid,
+        //     to: self.pid,
+        //     msg: PaxosMsg::DomPropose(prop.clone()),
+        // }));
+        
         for pid in &self.peers {
             let message = Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
@@ -447,17 +447,23 @@ where
             });
             self.outgoing.push(message);
         }
+        // Directly handle the propose for self
+        self.handle_dom_propose(prop.clone());
     }
 
     fn handle_dom_propose(&mut self, prop: DomPropose<T>) {
         let sender = prop.sender;
         let ack = self.dom.handle_dom_propose(prop, self.state.0);
 
-        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
-            from: self.pid,
-            to: sender,
-            msg: PaxosMsg::DomAck(ack),
-        }));
+        if sender != self.pid {
+            self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+                from: self.pid,
+                to: sender,
+                msg: PaxosMsg::DomAck(ack),
+            }));
+        } else {
+            self.handle_dom_ack(ack);
+        }
     }
 
     fn handle_dom_ack(&mut self, ack: DomAck) {

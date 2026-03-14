@@ -158,14 +158,19 @@ where
                 combined
             );
 
-            let old_decided_idx = self.internal_storage.get_decided_idx();
+            #[cfg(feature = "benchmark")]
+            {
+                let old_decided_idx = self.internal_storage.get_decided_idx();
+                self.fast_path_decisions += (fast_acc.idx - old_decided_idx) as u64; // benchmark
+            }
+            
             let decided_idx = fast_acc.idx;
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
             self.leader_state.prune_accepted_map(decided_idx);
-            self.fast_path_decisions += (decided_idx - old_decided_idx) as u64; // benchmark
-                                           //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
+
+            //send <Decide, currentRnd, decidedIdx> to all followers in promises{}    
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
             }
@@ -500,13 +505,17 @@ where
             if accepted.accepted_idx > self.internal_storage.get_decided_idx()
                 && self.leader_state.is_chosen(accepted.accepted_idx)
             {
-                let old_decided_idx = self.internal_storage.get_decided_idx();
                 let decided_idx = accepted.accepted_idx;
+                #[cfg(feature = "benchmark")]
+                {
+                    let old_decided_idx = self.internal_storage.get_decided_idx();
+                    self.slow_path_decisions += (decided_idx - old_decided_idx) as u64; // benchmark
+                }
                 self.internal_storage
                     .set_decided_idx(decided_idx)
                     .expect(WRITE_ERROR_MSG);
                 self.leader_state.prune_accepted_map(decided_idx);
-                self.slow_path_decisions += (decided_idx - old_decided_idx) as u64; // benchmark
+
                 for pid in self.leader_state.get_promised_followers() {
                     let latest_accdec = self.get_latest_accdec_message(pid);
                     match latest_accdec {

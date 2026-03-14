@@ -157,10 +157,15 @@ where
     }
 
     pub(crate) fn tick(&mut self) {
-        let proposals = &self.dom.release_ready();
-
-        for prop in proposals {
-            self.handle_dom_release(prop.clone());
+        match self.state {
+            (_, Phase::Accept) => {
+                let proposals = &self.dom.release_ready();
+        
+                for prop in proposals {
+                    self.handle_dom_release(prop.clone());
+                }
+            }
+            _ => (),
         }
     }
 

@@ -153,6 +153,11 @@ where
     }
 
     pub(crate) fn tick(&mut self) {
+        match self.state {
+            (_, Phase::Accept) => {}
+            _ => return,
+        };
+
         let proposals = &self.dom.release_ready();
 
         for prop in proposals {
@@ -437,7 +442,7 @@ where
         //     to: self.pid,
         //     msg: PaxosMsg::DomPropose(prop.clone()),
         // }));
-        
+
         for pid in &self.peers {
             let message = Message::SequencePaxos(PaxosMessage {
                 from: self.pid,

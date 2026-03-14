@@ -2,7 +2,7 @@ pub mod utils;
 
 use crate::utils::omnireplica::OmniPaxosComponent;
 use kompact::prelude::{promise, Ask, Component, FutureCollection};
-use omnipaxos::util::LogEntry;
+use omnipaxos::{util::LogEntry, messages::sequence_paxos::EntryId};
 use serial_test::serial;
 use std::{sync::Arc, thread};
 use utils::{TestConfig, TestSystem, Value};
@@ -35,8 +35,13 @@ fn trim_test() {
         futures.push(kfuture);
     }
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         elected_leader.on_definition(|x| {
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
     }
 
@@ -96,8 +101,13 @@ fn double_trim_test() {
         futures.push(kfuture);
     }
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         elected_leader.on_definition(|x| {
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
     }
 

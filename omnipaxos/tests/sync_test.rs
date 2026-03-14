@@ -2,7 +2,7 @@ pub mod utils;
 
 use crate::utils::STOPSIGN_ID;
 use kompact::prelude::{promise, Ask, FutureCollection};
-use omnipaxos::{storage::StopSign, util::NodeId, ClusterConfig};
+use omnipaxos::{storage::StopSign, util::NodeId, ClusterConfig, messages::sequence_paxos::EntryId};
 use serial_test::serial;
 use utils::{
     verification::{verify_log, verify_stopsign},
@@ -191,7 +191,12 @@ fn sync_test(test: SyncTest) {
                 .expect("Couldn't snapshot");
         }
         for entry in followers_accepted {
-            x.paxos.append(entry.clone()).expect("Couldn't append");
+            let e = EntryId {
+                client_id: 1,
+                command_id: entry.get_id(),
+            };
+            // x.paxos.append(entry.clone()).expect("Couldn't append");
+            x.paxos.append_with_id(entry.clone(), e).expect("Failed to append");
         }
     });
 
@@ -229,7 +234,12 @@ fn sync_test(test: SyncTest) {
                 .expect("Couldn't snapshot");
         }
         for entry in leaders_accepted {
-            x.paxos.append(entry.clone()).expect("Couldn't append");
+            let e = EntryId {
+                client_id: 1,
+                command_id: entry.get_id(),
+            };
+            // x.paxos.append(entry.clone()).expect("Couldn't append");
+            x.paxos.append_with_id(entry.clone(), e).expect("Failed to append");
         }
         match &test.leaders_ss {
             Some(ss) if !leaders_ss_is_decided => {

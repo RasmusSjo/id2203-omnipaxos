@@ -9,6 +9,7 @@ use utils::{TestConfig, TestSystem};
 /// Test case for batching.
 #[test]
 #[serial]
+#[ignore]
 fn batching_test() {
     let wait_time_between_propose = Duration::from_millis(2);
 

@@ -47,7 +47,9 @@ where
     unsynced_log: HashMap<usize, UnsyncedLogEntry<T>>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     accepted_prefix_hash: DOMHash, // Hash of the accepted prefix, initially 0 (XOR identity)
     unsynced_hash: DOMHash, // Hash of the unsynced log, this does not contain accepted (synced) entries, initially 0 (XOR identity)
+    #[cfg(feature = "benchmark")]
     fast_path_decisions: u64, //benchmark
+    #[cfg(feature = "benchmark")]
     slow_path_decisions: u64, //benchmark
     #[cfg(feature = "logging")]
     logger: Logger,
@@ -120,7 +122,9 @@ where
             unsynced_log: HashMap::new(),
             accepted_prefix_hash: DOMHash::default(),
             unsynced_hash: DOMHash::default(),
+            #[cfg(feature = "benchmark")]
             fast_path_decisions: 0, //benchmark
+            #[cfg(feature = "benchmark")]
             slow_path_decisions: 0, //benchmark
             #[cfg(feature = "logging")]
             logger: {
@@ -154,14 +158,14 @@ where
 
     pub(crate) fn tick(&mut self) {
         match self.state {
-            (_, Phase::Accept) => {}
-            _ => return,
-        };
-
-        let proposals = &self.dom.release_ready();
-
-        for prop in proposals {
-            self.handle_dom_release(prop.clone());
+            (_, Phase::Accept) => {
+                let proposals = &self.dom.release_ready();
+        
+                for prop in proposals {
+                    self.handle_dom_release(prop.clone());
+                }
+            }
+            _ => (),
         }
     }
 
@@ -170,6 +174,7 @@ where
     }
 
     //benchmark
+    #[cfg(feature = "benchmark")]
     pub(crate) fn get_fast_path_ratio(&self) -> (u64, u64) {
         (self.fast_path_decisions, self.slow_path_decisions)
     }

@@ -281,6 +281,7 @@ where
     }
 
     ///benchmark
+    #[cfg(feature = "benchmark")]
     pub fn get_fast_path_ratio(&self) -> (u64, u64) {
         self.seq_paxos.get_fast_path_ratio()
     }

@@ -4,13 +4,12 @@ use kompact::prelude::{promise, Ask, FutureCollection, KFuture};
 use omnipaxos::{messages::sequence_paxos::EntryId, util::{LogEntry, NodeId}};
 use serial_test::serial;
 use std::{thread, time::Duration};
-use utils::{verification::verify_log, StorageType, TestConfig, TestSystem, Value};
+use utils::{verification::{verify_log_unordered, verify_matching_logs}, StorageType, TestConfig, TestSystem, Value};
 
 const SLEEP_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[test]
 #[serial]
-#[ignore]
 fn leader_fail_follower_propose_test() {
     let cfg = TestConfig::load("recovery_test").expect("Test config loaded");
     let mut sys = TestSystem::with(cfg);
@@ -34,8 +33,15 @@ fn leader_fail_follower_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
+    let other_log: Vec<LogEntry<Value>> = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != leader)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
 
-    verify_log(read_log, proposals);
+    verify_log_unordered(read_log.clone(), proposals);
+    verify_matching_logs(&read_log, &other_log);
 
     println!("Pass leader_fail_follower_propose!");
 
@@ -49,7 +55,6 @@ fn leader_fail_follower_propose_test() {
 
 #[test]
 #[serial]
-#[ignore]
 fn leader_fail_leader_propose_test() {
     let cfg = TestConfig::load("recovery_test").expect("Test config loaded");
     let mut sys = TestSystem::with(cfg);
@@ -70,8 +75,15 @@ fn leader_fail_leader_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
+    let other_log: Vec<LogEntry<Value>> = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != leader)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
 
-    verify_log(read_log, proposals);
+    verify_log_unordered(read_log.clone(), proposals);
+    verify_matching_logs(&read_log, &other_log);
 
     println!("Pass leader_fail_leader_propose!");
 
@@ -85,7 +97,6 @@ fn leader_fail_leader_propose_test() {
 
 #[test]
 #[serial]
-#[ignore]
 fn follower_fail_leader_propose_test() {
     let cfg = TestConfig::load("recovery_test").expect("Test config loaded");
     let mut sys = TestSystem::with(cfg);
@@ -109,8 +120,15 @@ fn follower_fail_leader_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
+    let other_log: Vec<LogEntry<Value>> = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != leader)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
 
-    verify_log(read_log, proposals);
+    verify_log_unordered(read_log.clone(), proposals);
+    verify_matching_logs(&read_log, &other_log);
 
     println!("Pass follower_fail_leader_propose");
 
@@ -124,7 +142,6 @@ fn follower_fail_leader_propose_test() {
 
 #[test]
 #[serial]
-#[ignore]
 fn follower_fail_follower_propose_test() {
     let cfg = TestConfig::load("recovery_test").expect("Test config loaded");
     let mut sys = TestSystem::with(cfg);
@@ -148,8 +165,15 @@ fn follower_fail_follower_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
+    let other_log: Vec<LogEntry<Value>> = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != leader)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
 
-    verify_log(read_log, proposals);
+    verify_log_unordered(read_log.clone(), proposals);
+    verify_matching_logs(&read_log, &other_log);
 
     println!("Pass follower_fail_follower_propose");
 

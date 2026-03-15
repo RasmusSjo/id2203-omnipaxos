@@ -157,10 +157,15 @@ where
     }
 
     pub(crate) fn tick(&mut self) {
-        let proposals = &self.dom.release_ready();
-
-        for prop in proposals {
-            self.handle_dom_release(prop.clone());
+        match self.state {
+            (_, Phase::Accept) => {
+                let proposals = &self.dom.release_ready();
+        
+                for prop in proposals {
+                    self.handle_dom_release(prop.clone());
+                }
+            }
+            _ => (),
         }
     }
 
@@ -442,7 +447,7 @@ where
         //     to: self.pid,
         //     msg: PaxosMsg::DomPropose(prop.clone()),
         // }));
-        
+
         for pid in &self.peers {
             let message = Message::SequencePaxos(PaxosMessage {
                 from: self.pid,

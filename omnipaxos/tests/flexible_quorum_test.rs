@@ -5,6 +5,8 @@ use serial_test::serial;
 use std::thread;
 use utils::{verification::verify_log, TestConfig, TestSystem, Value};
 
+use crate::utils::verification::{verify_log_unordered, verify_matching_logs};
+
 /// Verifies that an OmniPaxos cluster with a write quorum size of Q can still make
 /// progress with Q-1 failures, including leader failure.
 #[test]
@@ -45,7 +47,16 @@ fn flexible_quorum_prepare_phase_test() {
 
     // Verify log
     let nodes_log = still_alive_node.on_definition(|x| x.read_decided_log());
-    verify_log(nodes_log, expected_log);
+    // verify_log(nodes_log, expected_log);
+    verify_log_unordered(nodes_log.clone(), expected_log);
+    let other_log = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != *still_alive_node_id)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
+    verify_matching_logs(&nodes_log, &other_log);
+    
 }
 
 /// Verifies that an OmniPaxos cluster with N nodes and a write quorum size of Q can still make
@@ -85,5 +96,13 @@ fn flexible_quorum_accept_phase_test() {
     // Verify log
     let leader = sys.nodes.get(&leader_id).unwrap();
     let leaders_log = leader.on_definition(|x| x.read_decided_log());
-    verify_log(leaders_log, expected_log);
+    // verify_log(leaders_log, expected_log);
+    verify_log_unordered(leaders_log.clone(), expected_log);
+    let other_log = sys
+        .nodes
+        .iter()
+        .find(|(pid, _)| **pid != leader_id)
+        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
+        .expect("No other node found");
+    verify_matching_logs(&leaders_log, &other_log);
 }

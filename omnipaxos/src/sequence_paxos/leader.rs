@@ -2,10 +2,10 @@ use super::super::{
     ballot_leader_election::Ballot,
     util::{LeaderState, PromiseMetaData},
 };
-use crate::util::{AcceptedMetaData, WRITE_ERROR_MSG, DOMHash};
+use crate::util::{AcceptedMetaData, DOMHash, WRITE_ERROR_MSG};
 
 use super::*;
-use std::collections::{HashSet};
+use std::collections::HashSet;
 
 impl<'a, T, B, C> SequencePaxos<'a, T, B, C>
 where
@@ -42,7 +42,8 @@ where
                 log_prefix_hash: self.accepted_prefix_hash.clone(),
             };
             self.leader_state.set_promise(my_promise, self.pid, true);
-            self.leader_state.set_unsynced_log(self.pid, self.unsynced_log.clone());
+            self.leader_state
+                .set_unsynced_log(self.pid, self.unsynced_log.clone());
             /* initialise longest chosen sequence and update state */
             self.state = (Role::Leader, Phase::Prepare);
             let prep = Prepare {
@@ -78,16 +79,6 @@ where
         }
     }
 
-    // pub(crate) fn handle_forwarded_proposal(&mut self, mut entries: Vec<T>) {
-    //     if !self.accepted_reconfiguration() {
-    //         match self.state {
-    //             (Role::Leader, Phase::Prepare) => self.buffered_proposals.append(&mut entries),
-    //             (Role::Leader, Phase::Accept) => self.accept_entries_leader(entries),
-    //             _ => self.forward_proposals(entries),
-    //         }
-    //     }
-    // }
-
     pub(crate) fn handle_forwarded_stopsign(&mut self, ss: StopSign) {
         if self.accepted_reconfiguration() {
             return;
@@ -99,7 +90,18 @@ where
         }
     }
 
-    pub(crate) fn handle_fast_accepted(&mut self, fast_acc: FastAccepted<T>, from: NodeId) {
+    pub(crate) fn handle_fast_accepted(&mut self, fast_acc: FastAccepted, from: NodeId) {
+        #[cfg(feature = "logging")]
+        debug!(
+            self.logger,
+            "Got FastAccepted from {}, idx: {}, prefix_hash: {:?}, chosen_idx: {}, accepted: {:?}",
+            from,
+            fast_acc.idx,
+            fast_acc.prefix_hash,
+            self.internal_storage.get_decided_idx(),
+            self.leader_state.accepted_indexes
+        );
+
         //if currentRnd != n then return
         if self.leader_state.n_leader != fast_acc.n {
             return;
@@ -110,21 +112,18 @@ where
             return;
         }
 
-        let entry = self.leader_state
-            .set_accepted_map(
-                fast_acc.idx, 
-                fast_acc.entry.clone(), 
-                fast_acc.entry_hash,
-                fast_acc.prefix_hash, 
-                from, 
-                true
-            );
-        
+        let entry = self.leader_state.set_accepted_map(
+            fast_acc.idx,
+            fast_acc.entry_hash,
+            fast_acc.prefix_hash,
+            from,
+            true,
+        );
+
         // compute quorum sizes
         let num_nodes = self.peers.len() + 1;
         let f = num_nodes / 2;
         let fast_quorum = f + (f + 1) / 2 + 1;
-        let slow_quorum = f + 1;
 
         let leader_candidate = (entry.prefix_hash, entry.entry_hash);
         let fast_voters: Set<NodeId> = entry
@@ -139,32 +138,31 @@ where
         // Check fast quorum (f + ceil(f/2) + 1)
         // if self in acceptedMap<idx>.slow AND |Union(fast, slow)| >= f + ceil(f/2) + 1
         if entry.slow.contains(&self.pid) && combined.len() >= fast_quorum {
-            //decidedIdx = idx
+            // decided_idx may jump by more than one entry, so count the full delta.
+            #[cfg(feature = "logging")]
+            debug!(
+                self.logger,
+                "Fast quorum reached for idx {}: {:?}", fast_acc.idx, combined
+            );
+
+            #[cfg(feature = "benchmark")]
+            {
+                let old_decided_idx = self.internal_storage.get_decided_idx();
+                self.fast_path_decisions += (fast_acc.idx - old_decided_idx) as u64;
+                // benchmark
+            }
+
             let decided_idx = fast_acc.idx;
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
             self.leader_state.prune_accepted_map(decided_idx);
+
             //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
             }
             return;
-        }
-
-        // Check slow quorum (f + 1)
-        // else if |acceptedMap<idx>.slow| >= f+1 AND self in acceptedMap<idx>.slow
-        if entry.slow.contains(&self.pid) && entry.slow.len() >= slow_quorum {
-            // decidedIdx = idx
-            let decided_idx = fast_acc.idx;
-            self.internal_storage
-                .set_decided_idx(decided_idx)
-                .expect(WRITE_ERROR_MSG);
-            self.leader_state.prune_accepted_map(decided_idx);
-            // send <Decide, currentRnd, decidedIdx> to all followers in promises{}
-            for pid in self.leader_state.get_promised_followers() {
-                self.send_decide(pid, decided_idx, false);
-            }
         }
     }
 
@@ -186,18 +184,6 @@ where
         let accepted_metadata = self
             .internal_storage
             .append_entry_with_batching(entry)
-            .expect(WRITE_ERROR_MSG);
-        if let Some(metadata) = accepted_metadata {
-            self.leader_state
-                .set_accepted_idx(self.pid, metadata.accepted_idx);
-            self.send_acceptdecide(metadata);
-        }
-    }
-
-    pub(crate) fn accept_entries_leader(&mut self, entries: Vec<T>) {
-        let accepted_metadata = self
-            .internal_storage
-            .append_entries_with_batching(entries)
             .expect(WRITE_ERROR_MSG);
         if let Some(metadata) = accepted_metadata {
             self.leader_state
@@ -267,6 +253,7 @@ where
 
     fn send_acceptdecide(&mut self, accepted: AcceptedMetaData<T>) {
         let decided_idx = self.internal_storage.get_decided_idx();
+        let accepted_prefix_hash = self.accepted_prefix_hash;
         let entry_meta = self
             .leader_state
             .take_pending_accept_meta(accepted.entries.len());
@@ -278,6 +265,7 @@ where
                     accdec.entries.extend(accepted.entries.iter().cloned());
                     accdec.entry_meta.extend(entry_meta.iter().copied());
                     accdec.decided_idx = decided_idx;
+                    accdec.log_prefix_hash = accepted_prefix_hash;
                 }
                 // Add new AcceptDecide message to follower
                 None => {
@@ -289,7 +277,7 @@ where
                         decided_idx,
                         entries: accepted.entries.clone(),
                         entry_meta: entry_meta.clone(),
-                        log_prefix_hash: self.accepted_prefix_hash,
+                        log_prefix_hash: accepted_prefix_hash,
                     };
                     self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                         from: self.pid,
@@ -334,7 +322,7 @@ where
             msg: PaxosMsg::Decide(d),
         }));
     }
-    
+
     fn handle_majority_promises(&mut self) {
         let max_promise_sync = self.leader_state.take_max_promise_sync();
         let decided_idx = self.leader_state.get_max_decided_idx();
@@ -395,7 +383,10 @@ where
         let dom_props: Vec<_> = self
             .unsynced_log
             .values()
-            .map(|ulog| self.dom.create_dom_propose(ulog.entry.clone(), ulog.entry_id))
+            .map(|ulog| {
+                self.dom
+                    .create_dom_propose(ulog.entry.clone(), ulog.entry_id)
+            })
             .collect();
 
         for dom_prop in dom_props {
@@ -456,7 +447,7 @@ where
 
     pub(crate) fn handle_accepted(&mut self, accepted: Accepted, from: NodeId) {
         #[cfg(feature = "logging")]
-        trace!(
+        debug!(
             self.logger,
             "Got Accepted from {}, idx: {}, chosen_idx: {}, accepted: {:?}",
             from,
@@ -471,10 +462,17 @@ where
                 && self.leader_state.is_chosen(accepted.accepted_idx)
             {
                 let decided_idx = accepted.accepted_idx;
+                #[cfg(feature = "benchmark")]
+                {
+                    let old_decided_idx = self.internal_storage.get_decided_idx();
+                    self.slow_path_decisions += (decided_idx - old_decided_idx) as u64;
+                    // benchmark
+                }
                 self.internal_storage
                     .set_decided_idx(decided_idx)
                     .expect(WRITE_ERROR_MSG);
                 self.leader_state.prune_accepted_map(decided_idx);
+
                 for pid in self.leader_state.get_promised_followers() {
                     let latest_accdec = self.get_latest_accdec_message(pid);
                     match latest_accdec {

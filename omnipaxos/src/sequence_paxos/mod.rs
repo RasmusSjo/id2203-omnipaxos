@@ -1,4 +1,5 @@
 use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::LeaderState};
+use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
@@ -8,24 +9,14 @@ use crate::{
         Entry, Snapshot, StopSign, Storage,
     },
     util::{
-        FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
-        UnsyncedLogEntry,
-        DOMHash,
-        READ_ERROR_MSG,
-        WRITE_ERROR_MSG,
+        DOMHash, FlexibleQuorum, LogSync, NodeId, PhysicalClock, Quorum, SequenceNumber,
+        UnsyncedLogEntry, READ_ERROR_MSG, WRITE_ERROR_MSG,
     },
-    
     ClusterConfig, CompactionErr, OmniPaxosConfig, ProposeErr,
 };
 #[cfg(feature = "logging")]
 use slog::{debug, info, trace, warn, Logger};
-use std::{
-    collections::HashMap,
-    collections::HashSet as Set, 
-    fmt::Debug,
-    vec,
-};
-use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
+use std::{collections::HashMap, collections::HashSet as Set, fmt::Debug, vec};
 
 pub mod follower;
 pub mod leader;
@@ -39,7 +30,6 @@ where
     B: Storage<T>,
     C: PhysicalClock,
 {
-    clock: &'a C,
     dom: Dom<'a, T, C>,
     pub(crate) internal_storage: InternalStorage<B, T>,
     pid: NodeId,
@@ -56,6 +46,10 @@ where
     unsynced_log: HashMap<usize, UnsyncedLogEntry<T>>, // Map<index, Entry> - entries accepted on fast path, removed when Accept received
     accepted_prefix_hash: DOMHash, // Hash of the accepted prefix, initially 0 (XOR identity)
     unsynced_hash: DOMHash, // Hash of the unsynced log, this does not contain accepted (synced) entries, initially 0 (XOR identity)
+    #[cfg(feature = "benchmark")]
+    fast_path_decisions: u64, //benchmark
+    #[cfg(feature = "benchmark")]
+    slow_path_decisions: u64, //benchmark
     #[cfg(feature = "logging")]
     logger: Logger,
 }
@@ -102,10 +96,10 @@ where
             10,
             10_000,
             3, // Same as Nezha
-            EstimatorStrategy::Percentile {percentile: 0.5}
-        ).unwrap();
+            EstimatorStrategy::Percentile { percentile: 0.5 },
+        )
+        .unwrap();
         let mut paxos = SequencePaxos {
-            clock,
             dom: Dom::new(owd_config, clock, pid),
             internal_storage: InternalStorage::with(
                 storage,
@@ -126,6 +120,10 @@ where
             unsynced_log: HashMap::new(),
             accepted_prefix_hash: DOMHash::default(),
             unsynced_hash: DOMHash::default(),
+            #[cfg(feature = "benchmark")]
+            fast_path_decisions: 0, //benchmark
+            #[cfg(feature = "benchmark")]
+            slow_path_decisions: 0, //benchmark
             #[cfg(feature = "logging")]
             logger: {
                 if let Some(logger) = config.custom_logger {
@@ -157,15 +155,26 @@ where
     }
 
     pub(crate) fn tick(&mut self) {
-        let proposals = &self.dom.release_ready();
+        match self.state {
+            (_, Phase::Accept) => {
+                let proposals = &self.dom.release_ready();
 
-        for prop in proposals {
-            self.handle_dom_release(prop.clone());
+                for prop in proposals {
+                    self.handle_dom_release(prop.clone());
+                }
+            }
+            _ => (),
         }
     }
 
     pub(crate) fn get_state(&self) -> &(Role, Phase) {
         &self.state
+    }
+
+    //benchmark
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn get_fast_path_ratio(&self) -> (u64, u64) {
+        (self.fast_path_decisions, self.slow_path_decisions)
     }
 
     pub(crate) fn get_promise(&self) -> Ballot {
@@ -270,23 +279,22 @@ where
         match self.state {
             // Leader case: append to synced-log and send Accept to followers
             (Role::Leader, Phase::Accept) => {
-                // I think we need to initialize the accepted map for this entry here
-                //
-                // prevHash = Hash(synced-log)
+                // The accepted-map key uses the prefix before this entry is appended.
                 let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
+                let prefix_hash = self.accepted_prefix_hash.clone();
                 self.accepted_prefix_hash.extend_hash(&entry_hash);
-                self.leader_state.push_pending_accept_meta(AcceptedEntryMeta {
-                    entry_id: prop.entry_id,
-                    deadline: prop.deadline,
-                });
+                self.leader_state
+                    .push_pending_accept_meta(AcceptedEntryMeta {
+                        entry_id: prop.entry_id,
+                        deadline: prop.deadline,
+                    });
 
                 self.leader_state.set_accepted_map(
-                    self.leader_state.get_accepted_idx(self.pid) + 1, 
-                    prop.entry.clone(), 
+                    self.leader_state.get_accepted_idx(self.pid) + 1,
                     entry_hash,
-                    self.accepted_prefix_hash.clone(), 
-                    self.pid, 
-                    false
+                    prefix_hash,
+                    self.pid,
+                    false,
                 );
                 self.accept_entry_leader(prop.entry);
             }
@@ -298,19 +306,22 @@ where
                 let idx = self.internal_storage.get_accepted_idx() + self.unsynced_log.len() + 1;
 
                 let entry_hash = DOMHash::with(prop.entry_id, prop.deadline);
-                
+
                 let mut unsynced_prefix_hash = self.unsynced_hash.clone();
                 unsynced_prefix_hash.extend_hash(&self.accepted_prefix_hash);
-                
+
                 // unsynced-log.append(entry)
-                self.unsynced_log.insert(idx, UnsyncedLogEntry { 
-                    entry: prop.entry.clone(), 
-                    entry_id: prop.entry_id,
-                    deadline: prop.deadline,
-                    entry_hash: entry_hash.clone(),
-                    prefix_hash: unsynced_prefix_hash.clone(),}
+                self.unsynced_log.insert(
+                    idx,
+                    UnsyncedLogEntry {
+                        entry: prop.entry.clone(),
+                        entry_id: prop.entry_id,
+                        deadline: prop.deadline,
+                        entry_hash: entry_hash.clone(),
+                        prefix_hash: unsynced_prefix_hash.clone(),
+                    },
                 );
-                
+
                 // send <FastAccepted, promisedRnd, idx, entry>
                 self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                     from: self.pid,
@@ -318,14 +329,12 @@ where
                     msg: PaxosMsg::FastAccepted(FastAccepted {
                         n: self.internal_storage.get_promise(),
                         idx,
-                        entry: prop.entry,
                         entry_hash,
                         prefix_hash: unsynced_prefix_hash,
                     }),
                 }));
 
                 self.unsynced_hash.extend_hash(&entry_hash); // Update unsynced hash with the new entry
-                
             }
             _ => (),
         }
@@ -413,7 +422,11 @@ where
     // }
 
     /// Append an entry with an id to the replicated log.
-    pub(crate) fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
+    pub(crate) fn append_with_id(
+        &mut self,
+        entry: T,
+        entry_id: EntryId,
+    ) -> Result<(), ProposeErr<T>> {
         if self.accepted_reconfiguration() {
             Err(ProposeErr::PendingReconfigEntry(entry))
         } else {
@@ -425,11 +438,11 @@ where
 
     fn send_dom_propose(&mut self, prop: DomPropose<T>) {
         // Broadcast message, include sending to self
-        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
-            from: self.pid,
-            to: self.pid,
-            msg: PaxosMsg::DomPropose(prop.clone()),
-        }));
+        // self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+        //     from: self.pid,
+        //     to: self.pid,
+        //     msg: PaxosMsg::DomPropose(prop.clone()),
+        // }));
 
         for pid in &self.peers {
             let message = Message::SequencePaxos(PaxosMessage {
@@ -439,17 +452,23 @@ where
             });
             self.outgoing.push(message);
         }
+        // Directly handle the propose for self
+        self.handle_dom_propose(prop.clone());
     }
 
     fn handle_dom_propose(&mut self, prop: DomPropose<T>) {
         let sender = prop.sender;
         let ack = self.dom.handle_dom_propose(prop, self.state.0);
 
-        self.outgoing.push(Message::SequencePaxos(PaxosMessage {
-            from: self.pid,
-            to: sender,
-            msg: PaxosMsg::DomAck(ack)
-        }));
+        if sender != self.pid {
+            self.outgoing.push(Message::SequencePaxos(PaxosMessage {
+                from: self.pid,
+                to: sender,
+                msg: PaxosMsg::DomAck(ack),
+            }));
+        } else {
+            self.handle_dom_ack(ack);
+        }
     }
 
     fn handle_dom_ack(&mut self, ack: DomAck) {
@@ -503,32 +522,9 @@ where
         }));
     }
 
-    // fn propose_entry(&mut self, entry: T) {
-    //     match self.state {
-    //         (Role::Leader, Phase::Prepare) => self.buffered_proposals.push(entry),
-    //         (Role::Leader, Phase::Accept) => self.accept_entry_leader(entry),
-    //         _ => self.forward_proposals(vec![entry]),
-    //     }
-    // }
-
     pub(crate) fn get_leader_state(&self) -> &LeaderState<T> {
         &self.leader_state
     }
-
-    // pub(crate) fn forward_proposals(&mut self, mut entries: Vec<T>) {
-    //     let leader = self.get_current_leader();
-    //     if leader > 0 && self.pid != leader {
-    //         let pf = PaxosMsg::ProposalForward(entries);
-    //         let msg = Message::SequencePaxos(PaxosMessage {
-    //             from: self.pid,
-    //             to: leader,
-    //             msg: pf,
-    //         });
-    //         self.outgoing.push(msg);
-    //     } else {
-    //         self.buffered_proposals.append(&mut entries);
-    //     }
-    // }
 
     pub(crate) fn forward_stopsign(&mut self, ss: StopSign) {
         let leader = self.get_current_leader();
@@ -546,6 +542,7 @@ where
             self.buffered_stopsign = Some(ss);
         }
     }
+
     /// Returns `LogSync`, a struct to help other servers synchronize their log to correspond to the
     /// current state of our own log. The `common_prefix_idx` marks where in the log the other server
     /// needs to be sync from.

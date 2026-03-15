@@ -2,10 +2,13 @@ pub mod utils;
 
 use crate::utils::omnireplica::OmniPaxosComponent;
 use kompact::prelude::{promise, Ask, Component, FutureCollection};
-use omnipaxos::util::LogEntry;
+use omnipaxos::{util::LogEntry, messages::sequence_paxos::EntryId};
 use serial_test::serial;
-use std::{sync::Arc, thread};
-use utils::{TestConfig, TestSystem, Value};
+use std::{collections::BTreeSet, sync::Arc, thread};
+use utils::{
+    verification::verify_matching_logs,
+    TestConfig, TestSystem, Value,
+};
 
 const TRIM_INDEX_INCREMENT: usize = 10;
 
@@ -35,8 +38,13 @@ fn trim_test() {
         futures.push(kfuture);
     }
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         elected_leader.on_definition(|x| {
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
     }
 
@@ -53,6 +61,16 @@ fn trim_test() {
     });
 
     thread::sleep(cfg.wait_timeout); // wait a little longer so that ALL nodes get trim
+
+    let trimmed_logs: Vec<_> = sys
+        .nodes
+        .iter()
+        .map(|(pid, node)| (*pid, node.on_definition(|x| x.read_decided_log())))
+        .collect();
+    let (_, reference_log) = trimmed_logs.first().expect("No logs collected");
+    for (_, log) in trimmed_logs.iter().skip(1) {
+        verify_matching_logs(reference_log, log);
+    }
 
     for (_pid, node) in sys.nodes {
         check_trim(&vec_proposals, cfg.trim_idx, node);
@@ -96,8 +114,13 @@ fn double_trim_test() {
         futures.push(kfuture);
     }
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         elected_leader.on_definition(|x| {
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
     }
 
@@ -120,6 +143,16 @@ fn double_trim_test() {
     });
 
     thread::sleep(cfg.wait_timeout); // wait a little longer so that ALL nodes trim
+
+    let trimmed_logs: Vec<_> = sys
+        .nodes
+        .iter()
+        .map(|(pid, node)| (*pid, node.on_definition(|x| x.read_decided_log())))
+        .collect();
+    let (_, reference_log) = trimmed_logs.first().expect("No logs collected");
+    for (_, log) in trimmed_logs.iter().skip(1) {
+        verify_matching_logs(reference_log, log);
+    }
 
     for (_pid, node) in sys.nodes {
         check_trim(&vec_proposals, cfg.trim_idx + TRIM_INDEX_INCREMENT, node);
@@ -146,16 +179,29 @@ fn check_trim(vec_proposals: &[Value], trim_idx: usize, node: Arc<Component<Omni
                 ),
             }
         }
+
+        let expected_ids: BTreeSet<_> = vec_proposals.iter().map(|value| value.get_id()).collect();
+        let mut remaining_ids = BTreeSet::new();
         for idx in trim_idx..num_proposals {
-            let expected_value = vec_proposals.get(idx).unwrap();
             match op.read(idx).unwrap() {
-                LogEntry::Decided(v) if &v == expected_value => {}
-                e => panic!(
-                    "Entry must be decided with {:?} at idx {}, but was {:?}",
-                    expected_value, idx, e
-                ),
+                LogEntry::Decided(v) => {
+                    assert!(
+                        expected_ids.contains(&v.get_id()),
+                        "Unexpected decided value {:?} at idx {}",
+                        v,
+                        idx
+                    );
+                    assert!(
+                        remaining_ids.insert(v.get_id()),
+                        "Duplicate decided value {:?} at idx {}",
+                        v,
+                        idx
+                    );
+                }
+                e => panic!("Entry at idx {} must be decided, but was {:?}", idx, e),
             }
         }
+
         let decided_sfx = op.read_decided_suffix(0).unwrap();
         assert_eq!(decided_sfx.len(), num_proposals - trim_idx + 1); // +1 as all trimmed entries are represented by LogEntry::Trimmed
     });

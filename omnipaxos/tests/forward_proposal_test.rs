@@ -1,7 +1,7 @@
 pub mod utils;
 
 use kompact::prelude::{promise, Ask};
-use omnipaxos::{ballot_leader_election::Ballot, util::NodeId};
+use omnipaxos::{ballot_leader_election::Ballot, util::NodeId, messages::sequence_paxos::EntryId};
 use rand::Rng;
 use serial_test::serial;
 use utils::{TestConfig, TestSystem, Value};
@@ -37,9 +37,14 @@ fn forward_proposal_test() {
     let px = sys.nodes.get(&proposal_node).unwrap();
     let v = Value::with_id(proposal_node);
     let (kprom, kfuture) = promise();
+    let e = EntryId {
+        client_id: 1,
+        command_id: v.get_id(),
+    };
     px.on_definition(|x| {
         x.insert_decided_future(Ask::new(kprom, v.clone()));
-        x.paxos.append(v.clone()).expect("Failed to call Append");
+        // x.paxos.append(v.clone()).expect("Failed to call Append");
+        x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
     });
 
     kfuture

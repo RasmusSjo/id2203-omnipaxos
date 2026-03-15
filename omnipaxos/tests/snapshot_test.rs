@@ -2,7 +2,7 @@ pub mod utils;
 
 use crate::utils::{omnireplica::OmniPaxosComponent, ValueSnapshot};
 use kompact::prelude::{promise, Ask, Component, FutureCollection};
-use omnipaxos::{storage::Snapshot, util::LogEntry};
+use omnipaxos::{storage::Snapshot, util::LogEntry, messages::sequence_paxos::EntryId};
 use serial_test::serial;
 use std::{sync::Arc, thread};
 use utils::{TestConfig, TestSystem, Value};
@@ -26,10 +26,15 @@ fn snapshot_test() {
     let vec_proposals = utils::create_proposals(1, cfg.num_proposals);
     let mut futures = vec![];
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         let (kprom, kfuture) = promise::<()>();
         elected_leader.on_definition(|x| {
             x.insert_decided_future(Ask::new(kprom, v.clone()));
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
         futures.push(kfuture);
     }
@@ -78,10 +83,15 @@ fn double_snapshot_test() {
     let vec_proposals = utils::create_proposals(1, cfg.num_proposals);
     let mut futures = vec![];
     for v in &vec_proposals {
+        let e = EntryId {
+            client_id: 1,
+            command_id: v.get_id(),
+        };
         let (kprom, kfuture) = promise::<()>();
         elected_leader.on_definition(|x| {
             x.insert_decided_future(Ask::new(kprom, v.clone()));
-            x.paxos.append(v.clone()).expect("Failed to append");
+            // x.paxos.append(v.clone()).expect("Failed to append");
+            x.paxos.append_with_id(v.clone(), e).expect("Failed to append");
         });
         futures.push(kfuture);
     }

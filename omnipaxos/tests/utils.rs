@@ -3,7 +3,7 @@ use kompact::{config_keys::system, executors::crossbeam_workstealing_pool, prelu
 use omnipaxos::{
     ballot_leader_election::Ballot,
     macros::*,
-    messages::Message,
+    messages::{Message, sequence_paxos::EntryId},
     storage::{Entry, Snapshot, Storage, StorageResult},
     util::{FlexibleQuorum, NodeId, SystemClock, SYSTEM_CLOCK},
     ClusterConfig, OmniPaxosConfig, ServerConfig,
@@ -687,6 +687,7 @@ impl TestSystem {
     /// Use node `proposer` to propose `proposals` then waits for the proposals
     /// to be decided.
     pub fn make_proposals(&self, proposer: NodeId, proposals: Vec<Value>, timeout: Duration) {
+        let proposer_id = proposer;
         let proposer = self
             .nodes
             .get(&proposer)
@@ -696,12 +697,18 @@ impl TestSystem {
         proposer.on_definition(|x| {
             for v in proposals {
                 let (kprom, kfuture) = promise::<()>();
-                x.paxos.append(v.clone()).expect("Failed to append");
+                let prop = v.clone();
+                let id = EntryId {
+                    client_id: proposer_id,
+                    command_id: prop.id as usize,
+                };
+                x.paxos.append_with_id(prop, id).expect("Failed to append");
                 x.insert_decided_future(Ask::new(kprom, v));
                 proposal_futures.push(kfuture);
             }
         });
 
+    // pub fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
         match FutureCollection::collect_with_timeout::<Vec<_>>(proposal_futures, timeout) {
             Ok(_) => {}
             Err(e) => panic!("Error on collecting futures of decided proposals: {}", e),
@@ -953,6 +960,8 @@ impl Value {
             job: id.to_string(),
         }
     }
+
+    pub fn get_id(&self) -> usize { self.id as usize }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1008,6 +1017,7 @@ pub mod verification {
         storage::{Snapshot, StopSign},
         util::{LogEntry, NodeId},
     };
+    use std::collections::BTreeMap;
 
     /// Verify that the log matches the proposed values, Depending on
     /// the timing the log should match one of the following cases.
@@ -1036,6 +1046,39 @@ pub mod verification {
             ),
             _ => panic!("Unexpected entries in the log: {:?} ", read_log),
         }
+    }
+
+    /// Verify that the log contains the proposed values, allowing decided entry order to differ.
+    /// This is useful for tests that exercise DOM-based proposal ordering.
+    pub fn verify_log_unordered(read_log: Vec<LogEntry<Value>>, proposals: Vec<Value>) {
+        let num_proposals = proposals.len();
+        match &read_log[..] {
+            [LogEntry::Decided(_), ..] => {
+                verify_entries_unordered(&read_log, &proposals, 0, num_proposals)
+            }
+            [LogEntry::Snapshotted(s)] => {
+                let exp_snapshot = ValueSnapshot::create(proposals.as_slice());
+                verify_snapshot(&read_log, s.trimmed_idx, &exp_snapshot);
+            }
+            [LogEntry::Snapshotted(s), LogEntry::Decided(_), ..] => {
+                let (snapshotted_proposals, last_proposals) = proposals.split_at(s.trimmed_idx);
+                let (snapshot_entry, decided_entries) = read_log.split_at(1);
+                let exp_snapshot = ValueSnapshot::create(snapshotted_proposals);
+                verify_snapshot(snapshot_entry, s.trimmed_idx, &exp_snapshot);
+                verify_entries_unordered(decided_entries, last_proposals, 0, num_proposals);
+            }
+            [] => assert!(
+                proposals.is_empty(),
+                "Log is empty but should be {:?}",
+                proposals
+            ),
+            _ => panic!("Unexpected entries in the log: {:?} ", read_log),
+        }
+    }
+
+    /// Verify that two logs are identical, including entry order.
+    pub fn verify_matching_logs(lhs: &[LogEntry<Value>], rhs: &[LogEntry<Value>]) {
+        assert_eq!(lhs, rhs, "logs differ\nleft: {:?}\nright: {:?}", lhs, rhs);
     }
 
     /// Verify that the log has a single snapshot of the latest entry.
@@ -1094,6 +1137,50 @@ pub mod verification {
                 ),
             }
         }
+    }
+
+    /// Verify that all log entries match the expected values, ignoring entry order.
+    pub fn verify_entries_unordered(
+        read_entries: &[LogEntry<Value>],
+        exp_entries: &[Value],
+        offset: usize,
+        decided_idx: usize,
+    ) {
+        assert_eq!(
+            read_entries.len(),
+            exp_entries.len(),
+            "read: {:?}, expected: {:?}",
+            read_entries,
+            exp_entries
+        );
+
+        let mut read_counts: BTreeMap<usize, usize> = BTreeMap::new();
+        for (idx, entry) in read_entries.iter().enumerate() {
+            let log_idx = idx + offset;
+            let value = match entry {
+                LogEntry::Decided(v) if log_idx < decided_idx => v,
+                LogEntry::Undecided(v) if log_idx >= decided_idx => v,
+                e => panic!(
+                    "{}",
+                    format!(
+                        "Unexpected entry at idx {}: {:?}, decided_idx: {}",
+                        idx, e, decided_idx
+                    )
+                ),
+            };
+            *read_counts.entry(value.get_id()).or_insert(0) += 1;
+        }
+
+        let mut expected_counts: BTreeMap<usize, usize> = BTreeMap::new();
+        for value in exp_entries {
+            *expected_counts.entry(value.get_id()).or_insert(0) += 1;
+        }
+
+        assert_eq!(
+            read_counts, expected_counts,
+            "read ids: {:?}, expected ids: {:?}",
+            read_counts, expected_counts
+        );
     }
 
     /// Verify that the log entry contains only a stopsign matching `exp_stopsign`

@@ -12,14 +12,11 @@ pub mod sequence_paxos {
     use crate::{
         ballot_leader_election::Ballot,
         storage::{Entry, StopSign},
-        util::{LogSync, NodeId, SequenceNumber, UnsyncedLogEntry, DOMHash},
+        util::{DOMHash, LogSync, NodeId, SequenceNumber, UnsyncedLogEntry},
     };
     #[cfg(feature = "serde")]
     use serde::{Deserialize, Serialize};
-    use std::{
-        fmt::Debug,
-        collections::HashMap,
-    };
+    use std::{collections::HashMap, fmt::Debug};
 
     /// Message sent by a follower on crash-recovery or dropped messages to request its leader to re-prepare them.
     #[derive(Copy, Clone, Debug)]
@@ -85,9 +82,6 @@ pub mod sequence_paxos {
         pub log_sync: LogSync<T>,
         /// The hash value for the log prefix up to the entries in `log_sync`.
         pub log_prefix_hash: DOMHash,
-        #[cfg(feature = "unicache")]
-        /// The UniCache of the leader
-        pub unicache: T::UniCache,
     }
 
     /// Message with entries to be replicated and the latest decided index sent by the leader in the accept phase.
@@ -110,9 +104,6 @@ pub mod sequence_paxos {
         pub entry_meta: Vec<AcceptedEntryMeta>,
         /// The hash value for the log prefix up to the entries in `entries`.
         pub log_prefix_hash: DOMHash,
-        #[cfg(feature = "unicache")]
-        /// Entries to be replicated.
-        pub entries: Vec<T::EncodeResult>,
     }
 
     /// Message sent by follower to leader when entries has been accepted.
@@ -136,18 +127,13 @@ pub mod sequence_paxos {
     }
 
     /// FastAccepted message
-    #[derive(Clone, Debug)]
+    #[derive(Debug, Clone)]
     #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-    pub struct FastAccepted<T>
-    where
-        T: Entry,
-    {
+    pub struct FastAccepted {
         /// The current round.
         pub n: Ballot,
         /// The index in the log where the follower placed this entry.
         pub idx: usize,
-        /// The entry the follower accepted optimistically.
-        pub entry: T,
         /// Hash of the current entry
         pub entry_hash: DOMHash,
         /// Hash of the follower's log prefix including this entry
@@ -221,7 +207,7 @@ pub mod sequence_paxos {
         /// The global time deadline for the proposal
         pub deadline: i64,
         /// The entry to be replicated
-        pub entry: T
+        pub entry: T,
     }
 
     /// Message sent as a response to a DomPropose message.
@@ -259,7 +245,7 @@ pub mod sequence_paxos {
         AcceptSync(AcceptSync<T>),
         AcceptDecide(AcceptDecide<T>),
         Accepted(Accepted),
-        FastAccepted(FastAccepted<T>),
+        FastAccepted(FastAccepted),
         NotAccepted(NotAccepted),
         Decide(Decide),
         // We use the DOM instead of forwarding client proposals

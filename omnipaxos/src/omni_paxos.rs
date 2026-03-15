@@ -1,3 +1,4 @@
+use crate::messages::sequence_paxos::EntryId;
 use crate::{
     ballot_leader_election::{Ballot, BallotLeaderElection},
     errors::{valid_config, ConfigError},
@@ -25,7 +26,6 @@ use std::{
 };
 #[cfg(feature = "toml_config")]
 use toml;
-use crate::messages::sequence_paxos::EntryId;
 
 /// Configuration for `OmniPaxos`.
 /// # Fields
@@ -366,12 +366,6 @@ where
         self.seq_paxos.is_reconfigured()
     }
 
-    // We use the DOM instead of forwarding client proposals, so we use `append_with_id` instead of `append`.
-    // /// Append an entry to the replicated log.
-    // pub fn append(&mut self, entry: T) -> Result<(), ProposeErr<T>> {
-    //     self.seq_paxos.append(entry)
-    // }
-
     /// Append an entry with an id to the replicated log
     pub fn append_with_id(&mut self, entry: T, entry_id: EntryId) -> Result<(), ProposeErr<T>> {
         self.seq_paxos.append_with_id(entry, entry_id)
@@ -417,7 +411,9 @@ where
         }
 
         // TODO probably guard this in some way, maybe if reconfigured?
-        self.seq_paxos.tick();
+        if let None = self.is_reconfigured() {
+            self.seq_paxos.tick();
+        }
     }
 
     /// Manually attempt to become the leader by incrementing this instance's Ballot. Calling this

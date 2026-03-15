@@ -32,7 +32,6 @@ where
     B: Storage<T>,
     C: PhysicalClock,
 {
-    clock: &'a C,
     dom: Dom<'a, T, C>,
     pub(crate) internal_storage: InternalStorage<B, T>,
     pid: NodeId,
@@ -103,7 +102,6 @@ where
         )
         .unwrap();
         let mut paxos = SequencePaxos {
-            clock,
             dom: Dom::new(owd_config, clock, pid),
             internal_storage: InternalStorage::with(
                 storage,
@@ -162,7 +160,7 @@ where
         match self.state {
             (_, Phase::Accept) => {
                 let proposals = &self.dom.release_ready();
-        
+
                 for prop in proposals {
                     self.handle_dom_release(prop.clone());
                 }
@@ -300,7 +298,6 @@ where
 
                 self.leader_state.set_accepted_map(
                     self.leader_state.get_accepted_idx(self.pid) + 1,
-                    prop.entry.clone(),
                     entry_hash,
                     prefix_hash,
                     self.pid,
@@ -339,7 +336,6 @@ where
                     msg: PaxosMsg::FastAccepted(FastAccepted {
                         n: self.internal_storage.get_promise(),
                         idx,
-                        entry: prop.entry,
                         entry_hash,
                         prefix_hash: unsynced_prefix_hash,
                     }),
@@ -533,32 +529,9 @@ where
         }));
     }
 
-    // fn propose_entry(&mut self, entry: T) {
-    //     match self.state {
-    //         (Role::Leader, Phase::Prepare) => self.buffered_proposals.push(entry),
-    //         (Role::Leader, Phase::Accept) => self.accept_entry_leader(entry),
-    //         _ => self.forward_proposals(vec![entry]),
-    //     }
-    // }
-
     pub(crate) fn get_leader_state(&self) -> &LeaderState<T> {
         &self.leader_state
     }
-
-    // pub(crate) fn forward_proposals(&mut self, mut entries: Vec<T>) {
-    //     let leader = self.get_current_leader();
-    //     if leader > 0 && self.pid != leader {
-    //         let pf = PaxosMsg::ProposalForward(entries);
-    //         let msg = Message::SequencePaxos(PaxosMessage {
-    //             from: self.pid,
-    //             to: leader,
-    //             msg: pf,
-    //         });
-    //         self.outgoing.push(msg);
-    //     } else {
-    //         self.buffered_proposals.append(&mut entries);
-    //     }
-    // }
 
     pub(crate) fn forward_stopsign(&mut self, ss: StopSign) {
         let leader = self.get_current_leader();
@@ -576,6 +549,7 @@ where
             self.buffered_stopsign = Some(ss);
         }
     }
+
     /// Returns `LogSync`, a struct to help other servers synchronize their log to correspond to the
     /// current state of our own log. The `common_prefix_idx` marks where in the log the other server
     /// needs to be sync from.

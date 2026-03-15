@@ -160,7 +160,7 @@ where
         match self.state {
             (_, Phase::Accept) => {
                 let proposals = &self.dom.release_ready();
-        
+
                 for prop in proposals {
                     self.handle_dom_release(prop.clone());
                 }
@@ -293,7 +293,6 @@ where
 
                 self.leader_state.set_accepted_map(
                     self.leader_state.get_accepted_idx(self.pid) + 1,
-                    prop.entry.clone(),
                     entry_hash,
                     prefix_hash,
                     self.pid,
@@ -332,7 +331,6 @@ where
                     msg: PaxosMsg::FastAccepted(FastAccepted {
                         n: self.internal_storage.get_promise(),
                         idx,
-                        entry: prop.entry,
                         entry_hash,
                         prefix_hash: unsynced_prefix_hash,
                     }),

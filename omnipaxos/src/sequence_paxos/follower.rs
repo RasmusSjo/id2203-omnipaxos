@@ -56,7 +56,7 @@ where
     pub(crate) fn handle_acceptsync(&mut self, accsync: AcceptSync<T>, from: NodeId) {
         if self.check_valid_ballot(accsync.n) && self.state == (Role::Follower, Phase::Prepare) {
             self.cached_promise_message = None;
-                
+
             let new_accepted_idx = self
                 .internal_storage
                 .sync_log(accsync.n, accsync.decided_idx, Some(accsync.log_sync))
@@ -76,9 +76,8 @@ where
             self.latest_accepted_meta = Some((accsync.n, cached_idx));
             self.unsynced_log.clear(); // Clear unsynced log as they are now included in the log sync
             self.unsynced_hash = DOMHash::default();
-            self.dom.clear_late_buffer();
             // Do we need to clear buffered proposals that are now included in the log sync?
-            // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted. 
+            // I think we can keep them, since if they are included in the unsynced log, they will never be accepted by the leader and thus will be discarded when other proposals are accepted.
 
             self.outgoing.push(Message::SequencePaxos(PaxosMessage {
                 from: self.pid,
@@ -120,8 +119,7 @@ where
             // Update accepted prefix hash after appending entries
             self.accepted_prefix_hash = log_prefix_hash;
 
-            let flushed_after_decide =
-                self.update_decided_idx_and_get_accepted_idx(decided_idx);
+            let flushed_after_decide = self.update_decided_idx_and_get_accepted_idx(decided_idx);
             if flushed_after_decide.is_some() {
                 new_accepted_idx = flushed_after_decide;
             }
@@ -131,11 +129,7 @@ where
         }
     }
 
-    fn cleanup_fast_path_metadata(
-        &mut self,
-        base_idx: usize,
-        entry_meta: &[AcceptedEntryMeta],
-    ) {
+    fn cleanup_fast_path_metadata(&mut self, base_idx: usize, entry_meta: &[AcceptedEntryMeta]) {
         let mut mismatch = false;
 
         for (offset, meta) in entry_meta.iter().enumerate() {

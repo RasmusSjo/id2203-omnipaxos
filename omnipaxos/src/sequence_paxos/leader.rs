@@ -100,7 +100,7 @@ where
         }
     }
 
-    pub(crate) fn handle_fast_accepted(&mut self, fast_acc: FastAccepted<T>, from: NodeId) {
+    pub(crate) fn handle_fast_accepted(&mut self, fast_acc: FastAccepted, from: NodeId) {
         #[cfg(feature = "logging")]
         debug!(
             self.logger,
@@ -111,7 +111,7 @@ where
             self.internal_storage.get_decided_idx(),
             self.leader_state.accepted_indexes
         );
-        
+
         //if currentRnd != n then return
         if self.leader_state.n_leader != fast_acc.n {
             return;
@@ -124,7 +124,6 @@ where
 
         let entry = self.leader_state.set_accepted_map(
             fast_acc.idx,
-            fast_acc.entry.clone(),
             fast_acc.entry_hash,
             fast_acc.prefix_hash,
             from,
@@ -153,32 +152,31 @@ where
             #[cfg(feature = "logging")]
             debug!(
                 self.logger,
-                "Fast quorum reached for idx {}: {:?}",
-                fast_acc.idx,
-                combined
+                "Fast quorum reached for idx {}: {:?}", fast_acc.idx, combined
             );
 
             #[cfg(feature = "benchmark")]
             {
                 let old_decided_idx = self.internal_storage.get_decided_idx();
-                self.fast_path_decisions += (fast_acc.idx - old_decided_idx) as u64; // benchmark
+                self.fast_path_decisions += (fast_acc.idx - old_decided_idx) as u64;
+                // benchmark
             }
-            
+
             let decided_idx = fast_acc.idx;
             self.internal_storage
                 .set_decided_idx(decided_idx)
                 .expect(WRITE_ERROR_MSG);
             self.leader_state.prune_accepted_map(decided_idx);
 
-            //send <Decide, currentRnd, decidedIdx> to all followers in promises{}    
+            //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
             for pid in self.leader_state.get_promised_followers() {
                 self.send_decide(pid, decided_idx, false);
             }
             return;
         }
 
-        // I think we can skip the slow quorum check, 
-        // since fast accepted messages don't affect slow quorum votes. 
+        // I think we can skip the slow quorum check,
+        // since fast accepted messages don't affect slow quorum votes.
         // So I comment out below code for now
         // Check slow quorum (f + 1)
         // else if |acceptedMap<idx>.slow| >= f+1 AND self in acceptedMap<idx>.slow
@@ -509,7 +507,8 @@ where
                 #[cfg(feature = "benchmark")]
                 {
                     let old_decided_idx = self.internal_storage.get_decided_idx();
-                    self.slow_path_decisions += (decided_idx - old_decided_idx) as u64; // benchmark
+                    self.slow_path_decisions += (decided_idx - old_decided_idx) as u64;
+                    // benchmark
                 }
                 self.internal_storage
                     .set_decided_idx(decided_idx)

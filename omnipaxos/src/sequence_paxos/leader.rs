@@ -119,51 +119,8 @@ where
             from,
             true,
         );
-
-        // compute quorum sizes
-        let num_nodes = self.peers.len() + 1;
-        let f = num_nodes / 2;
-        let fast_quorum = f + (f + 1) / 2 + 1;
-
-        let leader_candidate = (entry.prefix_hash, entry.entry_hash);
-        let fast_voters: Set<NodeId> = entry
-            .fast
-            .get(&leader_candidate)
-            .cloned()
-            .unwrap_or_default();
-
-        // Only count fast-path votes for the leader's current candidate at this index.
-        let combined: Set<NodeId> = fast_voters.union(&entry.slow).cloned().collect();
-
-        // Check fast quorum (f + ceil(f/2) + 1)
-        // if self in acceptedMap<idx>.slow AND |Union(fast, slow)| >= f + ceil(f/2) + 1
-        if entry.slow.contains(&self.pid) && combined.len() >= fast_quorum {
-            // decided_idx may jump by more than one entry, so count the full delta.
-            #[cfg(feature = "logging")]
-            debug!(
-                self.logger,
-                "Fast quorum reached for idx {}: {:?}", fast_acc.idx, combined
-            );
-
-            #[cfg(feature = "benchmark")]
-            {
-                let old_decided_idx = self.internal_storage.get_decided_idx();
-                self.fast_path_decisions += (fast_acc.idx - old_decided_idx) as u64;
-                // benchmark
-            }
-
-            let decided_idx = fast_acc.idx;
-            self.internal_storage
-                .set_decided_idx(decided_idx)
-                .expect(WRITE_ERROR_MSG);
-            self.leader_state.prune_accepted_map(decided_idx);
-
-            //send <Decide, currentRnd, decidedIdx> to all followers in promises{}
-            for pid in self.leader_state.get_promised_followers() {
-                self.send_decide(pid, decided_idx, false);
-            }
-            return;
-        }
+        let _ = entry;
+        self.try_fast_decide_idx(fast_acc.idx);
     }
 
     pub(crate) fn send_prepare(&mut self, to: NodeId) {
@@ -186,10 +143,68 @@ where
             .append_entry_with_batching(entry)
             .expect(WRITE_ERROR_MSG);
         if let Some(metadata) = accepted_metadata {
+            let accepted_idx = metadata.accepted_idx;
+            let num_entries = metadata.entries.len();
             self.leader_state
-                .set_accepted_idx(self.pid, metadata.accepted_idx);
+                .set_accepted_idx(self.pid, accepted_idx);
             self.send_acceptdecide(metadata);
+
+            // Re-check fast quorum when the leader has locally accepted these entries.
+            let first_idx = accepted_idx + 1 - num_entries;
+            for idx in first_idx..=accepted_idx {
+                self.try_fast_decide_idx(idx);
+            }
         }
+    }
+
+    fn try_fast_decide_idx(&mut self, idx: usize) -> bool {
+        if self.state != (Role::Leader, Phase::Accept) {
+            return false;
+        }
+
+        let decided_idx = self.internal_storage.get_decided_idx();
+        let accepted_idx = self.internal_storage.get_accepted_idx();
+        if idx <= decided_idx || idx > accepted_idx {
+            return false;
+        }
+
+        let Some(entry) = self.leader_state.get_accepted_map(idx).cloned() else {
+            return false;
+        };
+
+        let num_nodes = self.peers.len() + 1;
+        let f = num_nodes / 2;
+        let fast_quorum = f + (f + 1) / 2 + 1;
+
+        let leader_candidate = (entry.prefix_hash, entry.entry_hash);
+        let fast_voters: Set<NodeId> = entry
+            .fast
+            .get(&leader_candidate)
+            .cloned()
+            .unwrap_or_default();
+        let combined: Set<NodeId> = fast_voters.union(&entry.slow).cloned().collect();
+
+        if !entry.slow.contains(&self.pid) || combined.len() < fast_quorum {
+            return false;
+        }
+
+        #[cfg(feature = "logging")]
+        debug!(self.logger, "Fast quorum reached for idx {}: {:?}", idx, combined);
+
+        #[cfg(feature = "benchmark")]
+        {
+            self.fast_path_decisions += (idx - decided_idx) as u64;
+        }
+
+        self.internal_storage
+            .set_decided_idx(idx)
+            .expect(WRITE_ERROR_MSG);
+        self.leader_state.prune_accepted_map(idx);
+
+        for pid in self.leader_state.get_promised_followers() {
+            self.send_decide(pid, idx, false);
+        }
+        true
     }
 
     pub(crate) fn accept_stopsign_leader(&mut self, ss: StopSign) {

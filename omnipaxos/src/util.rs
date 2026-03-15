@@ -461,6 +461,10 @@ where
         accepted_entry
     }
 
+    pub fn get_accepted_map(&self, idx: usize) -> Option<&AcceptedMapEntry> {
+        self.accepted_map.get(&idx)
+    }
+
     /// Prunes the accepted map up to the decided index.
     pub fn prune_accepted_map(&mut self, decided_idx: usize) {
         self.accepted_map.retain(|&idx, _| idx > decided_idx);

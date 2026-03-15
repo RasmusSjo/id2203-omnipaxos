@@ -12,6 +12,8 @@ election_tick_timeout = 10
 resend_message_tick_timeout = 100
 # If `tick()` is called every 10ms then batched entries will be flushed every 2000ms
 flush_batch_tick_timeout = 200
+# If `poll()` is called every 10us (microseconds) then requests will be released every 100us
+release_requests_timeout = 10
 buffer_size = 10000
 batch_size = 2
 logger_file_path = "logs/paxos_1.log"

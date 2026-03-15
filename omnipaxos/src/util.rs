@@ -549,6 +549,7 @@ pub(crate) mod defaults {
     pub(crate) const ELECTION_TIMEOUT: u64 = 1;
     pub(crate) const RESEND_MESSAGE_TIMEOUT: u64 = 100;
     pub(crate) const FLUSH_BATCH_TIMEOUT: u64 = 200;
+    pub(crate) const RELEASE_REQUESTS_TIMEOUT: u64 = 1;
 }
 
 #[allow(missing_docs)]

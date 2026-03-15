@@ -156,7 +156,7 @@ where
         paxos
     }
 
-    pub(crate) fn tick(&mut self) {
+    pub(crate) fn release_requests(&mut self) {
         match self.state {
             (_, Phase::Accept) => {
                 let proposals = &self.dom.release_ready();

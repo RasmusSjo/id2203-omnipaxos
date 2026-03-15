@@ -89,6 +89,9 @@ pub struct TestConfig {
     #[serde(rename(deserialize = "flush_batch_timeout_ms"))]
     #[serde(deserialize_with = "deserialize_duration_millis")]
     pub flush_batch_timeout: Duration,
+    #[serde(rename(deserialize = "release_requests_timeout_ms"))]
+    #[serde(deserialize_with = "deserialize_duration_millis")]
+    pub release_requests_timeout: Duration,
     pub storage_type: StorageTypeSelector,
     pub num_proposals: u64,
     pub num_elections: u64,
@@ -131,6 +134,7 @@ impl TestConfig {
                 / self.election_timeout.as_millis() as u64,
             flush_batch_tick_timeout: self.flush_batch_timeout.as_millis() as u64
                 / self.election_timeout.as_millis() as u64,
+            release_requests_poll_timeout: self.release_requests_timeout.as_millis() as u64,
             batch_size: self.batch_size,
             ..Default::default()
         };
@@ -150,6 +154,7 @@ impl Default for TestConfig {
             election_timeout: Duration::from_millis(200),
             resend_message_timeout: Duration::from_millis(500),
             flush_batch_timeout: Duration::from_millis(2000),
+            release_requests_timeout: Duration::from_millis(1),
             storage_type: StorageTypeSelector::Memory,
             num_proposals: 100,
             num_elections: 0,
@@ -507,6 +512,7 @@ impl TestSystem {
                     op_config.server_config.buffer_size,
                     op_config.build(storage, clock).unwrap(),
                     test_config.election_timeout,
+                    test_config.release_requests_timeout,
                 )
             });
             omni_reg_f.wait_expect(REGISTRATION_TIMEOUT, "ReplicaComp failed to register!");
@@ -577,6 +583,7 @@ impl TestSystem {
                     op_config.server_config.buffer_size,
                     op_config.build(storage, clock).unwrap(),
                     test_config.election_timeout,
+                    test_config.release_requests_timeout,
                 )
             });
 
@@ -771,6 +778,8 @@ pub mod omnireplica {
         paxos_timer: Option<ScheduledTimer>,
         tick_timer: Option<ScheduledTimer>,
         tick_timeout: Duration,
+        poll_timer: Option<ScheduledTimer>,
+        poll_timeout: Duration,
         pub paxos: OmniPaxos<'static, Value, StorageType<Value>, SystemClock>,
         decided_futures: HashMap<NodeId, Ask<Value, ()>>,
         pub election_futures: Vec<Ask<(), Ballot>>,
@@ -802,11 +811,24 @@ pub mod omnireplica {
                         Handled::Ok
                     }),
                 );
+            self.poll_timer = Some(self.schedule_periodic(
+                self.poll_timeout,
+                self.poll_timeout,
+                move |c, _| {
+                    c.paxos.poll();
+                    c.send_outgoing_msgs();
+                    c.answer_decided_future();
+                    Handled::Ok
+                },
+            ));
             Handled::Ok
         }
 
         fn on_kill(&mut self) -> Handled {
             if let Some(timer) = self.paxos_timer.take() {
+                self.cancel_timer(timer);
+            }
+            if let Some(timer) = self.poll_timer.take() {
                 self.cancel_timer(timer);
             }
             Handled::Ok
@@ -819,6 +841,7 @@ pub mod omnireplica {
             buffer_size: usize,
             paxos: OmniPaxos<'static, Value, StorageType<Value>, SystemClock>,
             tick_timeout: Duration,
+            poll_timeout: Duration,
         ) -> Self {
             Self {
                 ctx: ComponentContext::uninitialised(),
@@ -828,6 +851,8 @@ pub mod omnireplica {
                 paxos_timer: None,
                 tick_timer: None,
                 tick_timeout,
+                poll_timer: None,
+                poll_timeout,
                 decided_idx: paxos.get_decided_idx(),
                 paxos,
                 decided_futures: HashMap::new(),

@@ -127,6 +127,11 @@ impl OwdEstimator {
             .unwrap_or(self.config.max_owd)
     }
 
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn estimates_snapshot(&self) -> HashMap<NodeId, i64> {
+        self.estimates.clone()
+    }
+
     /// Inserts a new OWD sample for the given sender and updates the
     /// sliding-window estimate of the one-way delay for that sender.
     pub(crate) fn update(&mut self, id: NodeId, sample: OwdSample) {
@@ -229,5 +234,10 @@ impl OutgoingOwdTracker {
             .copied()
             .max()
             .unwrap_or(self.default_owd)
+    }
+
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn estimates_snapshot(&self) -> HashMap<NodeId, i64> {
+        self.estimates.clone()
     }
 }

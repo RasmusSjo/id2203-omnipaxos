@@ -1,14 +1,16 @@
-use std::cmp::max;
-use crate::dom::buffer::{EarlyBuffer, EarlyBufferInsertError, LateBuffer};
+use crate::dom::buffer::{EarlyBuffer, EarlyBufferInsertError};
 use crate::dom::owd_estimator::{OutgoingOwdTracker, OwdEstimator, OwdSample};
-use crate::messages::sequence_paxos::{DomAck, DomPropose, EntryId, ClockTimestamp};
+use crate::messages::sequence_paxos::{ClockTimestamp, DomAck, DomPropose, EntryId};
 use crate::sequence_paxos::Role;
 use crate::storage::Entry;
 use crate::util::{NodeId, PhysicalClock};
+#[cfg(feature = "benchmark")]
+use std::collections::HashMap;
+use std::cmp::max;
 
 mod buffer;
 mod owd_estimator;
-pub(crate) use owd_estimator::{OwdEstimatorConfig, EstimatorStrategy};
+pub(crate) use owd_estimator::{EstimatorStrategy, OwdEstimatorConfig};
 
 const ONE_MICRO_SECOND: i64 = 1000;
 
@@ -22,8 +24,18 @@ where
     clock: &'a C,
     incoming_owd_estimates: OwdEstimator,
     outgoing_owd_estimates: OutgoingOwdTracker,
-    eb: EarlyBuffer<T>,
-    lb: LateBuffer<T>,
+    early_buffer: EarlyBuffer<T>,
+}
+
+#[cfg(feature = "benchmark")]
+/// Snapshot of DOM one-way delay estimates used for benchmark output.
+pub struct DomOwdSnapshot {
+    /// Current incoming OWD estimates keyed by sender node id.
+    pub incoming_estimates: HashMap<NodeId, i64>,
+    /// Current outgoing OWD estimates keyed by receiver node id.
+    pub outgoing_estimates: HashMap<NodeId, i64>,
+    /// Maximum outgoing OWD estimate across all peers.
+    pub max_outgoing_estimate: i64,
 }
 
 impl<'a, T, C> Dom<'a, T, C>
@@ -38,8 +50,7 @@ where
             clock,
             incoming_owd_estimates: OwdEstimator::with_config(config),
             outgoing_owd_estimates: OutgoingOwdTracker::new(config.max_owd()),
-            eb: EarlyBuffer::new(),
-            lb: LateBuffer::new(),
+            early_buffer: EarlyBuffer::new(),
         }
     }
 
@@ -68,7 +79,7 @@ where
         let now = self.clock.get_time_with_uncertainty();
         let mut proposals = Vec::new();
 
-        while let Some(prop) = self.eb.pop_ready(now.0 - now.1) {
+        while let Some(prop) = self.early_buffer.pop_ready(now.0 - now.1) {
             proposals.push(prop);
         }
 
@@ -77,11 +88,7 @@ where
 
     /// Handles a DOM proposal for the given role. Returns an ack with the
     /// estimated one-way delay of the proposal to be returned to the sender
-    pub(crate) fn handle_dom_propose(
-        &mut self,
-        prop: DomPropose<T>,
-        role: Role,
-    ) -> DomAck {
+    pub(crate) fn handle_dom_propose(&mut self, prop: DomPropose<T>, role: Role) -> DomAck {
         let received_time = self.clock.get_time_with_uncertainty();
         let owd_sample = OwdSample::new(
             prop.sent_time.0,
@@ -97,13 +104,14 @@ where
             estimated_owd: self.incoming_owd_estimates.estimate_for(prop.sender),
         };
 
-        match self.eb.insert(prop) {
-            Ok(_) => { },
+        match self.early_buffer.insert(prop) {
+            Ok(_) => {}
             Err(EarlyBufferInsertError::Late(prop)) => {
-                self.lb.insert(prop.clone());
                 if role == Role::Leader {
                     let prop = self.extend_deadline(prop);
-                    self.eb.insert(prop).expect("proposal cannot be late");
+                    self.early_buffer
+                        .insert(prop)
+                        .expect("proposal cannot be late");
                 }
             }
         };
@@ -112,10 +120,10 @@ where
     }
 
     fn extend_deadline(&self, prop: DomPropose<T>) -> DomPropose<T> {
-        let last_deadline = self.eb.last_released_deadline();
+        let last_deadline = self.early_buffer.last_released_deadline();
         let now = self.clock.get_time_with_uncertainty();
         let now_with_uncertainty = now.0 + now.1;
-        
+
         let new_deadline = match last_deadline {
             Some(last) => max(now_with_uncertainty, last + ONE_MICRO_SECOND),
             None => now_with_uncertainty,
@@ -132,20 +140,25 @@ where
 
     /// Handles a DOM ack.
     pub(crate) fn handle_dom_ack(&mut self, ack: DomAck) {
-        self.outgoing_owd_estimates.update(ack.sender, ack.estimated_owd);
+        self.outgoing_owd_estimates
+            .update(ack.sender, ack.estimated_owd);
+    }
+
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn owd_snapshot(&self) -> DomOwdSnapshot {
+        DomOwdSnapshot {
+            incoming_estimates: self.incoming_owd_estimates.estimates_snapshot(),
+            outgoing_estimates: self.outgoing_owd_estimates.estimates_snapshot(),
+            max_outgoing_estimate: self.outgoing_owd_estimates.get_max_owd(),
+        }
     }
 
     /// Removes the proposal with the given entry id from the buffers. Returns the proposal if it was found in any of the buffers.
     pub(crate) fn remove_from_buffers(&mut self, entry_id: EntryId) -> Option<DomPropose<T>> {
-        if let Some(prop) = self.eb.remove(entry_id) {
+        if let Some(prop) = self.early_buffer.remove(entry_id) {
             Some(prop)
         } else {
-            self.lb.remove(entry_id)
+            None
         }
-    }
-
-    /// Clear late buffer. 
-    pub(crate) fn clear_late_buffer(&mut self) {
-        self.lb.clear();
     }
 }

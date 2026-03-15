@@ -11,6 +11,8 @@ use crate::{
     },
     utils::{ui, ui::ClusterState},
 };
+#[cfg(feature = "benchmark")]
+use crate::dom::DomOwdSnapshot;
 #[cfg(any(feature = "toml_config", feature = "serde"))]
 use serde::Deserialize;
 #[cfg(feature = "serde")]
@@ -284,6 +286,12 @@ where
     #[cfg(feature = "benchmark")]
     pub fn get_fast_path_ratio(&self) -> (u64, u64) {
         self.seq_paxos.get_fast_path_ratio()
+    }
+
+    #[cfg(feature = "benchmark")]
+    /// Returns a snapshot of the current DOM one-way delay estimates.
+    pub fn get_dom_owd_snapshot(&self) -> DomOwdSnapshot {
+        self.seq_paxos.get_dom_owd_snapshot()
     }
 
     /// Returns the ID of the current leader and whether the node's `Phase` is `Phase::Accepted`.

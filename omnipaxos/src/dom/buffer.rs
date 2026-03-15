@@ -1,7 +1,7 @@
-use std::collections::{BinaryHeap, HashMap};
-use serde::{Deserialize, Serialize};
 use crate::messages::sequence_paxos::{DomPropose, EntryId};
 use crate::storage::Entry;
+use serde::{Deserialize, Serialize};
+use std::collections::{BinaryHeap, HashMap};
 
 /// Key used to order entries in the early buffer.
 /// Ordering is based on deadline, with entry id as a tie-breaker.
@@ -73,7 +73,10 @@ impl<T: Entry> EarlyBuffer<T> {
 
     /// Inserts the proposal into the early buffer.
     /// Returns an error if the proposal is late.
-    pub(crate) fn insert(&mut self, proposal: DomPropose<T>) -> Result<(), EarlyBufferInsertError<T>> {
+    pub(crate) fn insert(
+        &mut self,
+        proposal: DomPropose<T>,
+    ) -> Result<(), EarlyBufferInsertError<T>> {
         // TODO check for duplicates
         if self.is_late(&proposal) {
             return Err(EarlyBufferInsertError::Late(proposal));
@@ -88,14 +91,15 @@ impl<T: Entry> EarlyBuffer<T> {
     }
 
     fn is_late(&self, proposal: &DomPropose<T>) -> bool {
-        self.last_released.is_some_and(|last| BufferKey::from(proposal) <= last)
+        self.last_released
+            .is_some_and(|last| BufferKey::from(proposal) <= last)
     }
 
     /// Returns the earliest proposal in the early buffer, if any.
     pub(crate) fn peek(&self) -> Option<&DomPropose<T>> {
         self.heap.peek().map(|entry| &entry.proposal)
     }
-    
+
     /// Removes and returns the earliest proposal in the early buffer, if any.
     pub(crate) fn pop(&mut self) -> Option<DomPropose<T>> {
         let entry = self.heap.pop()?;
@@ -135,44 +139,4 @@ impl<T: Entry> EarlyBuffer<T> {
 pub(crate) enum EarlyBufferInsertError<T: Entry> {
     /// The request was late and could not be inserted.
     Late(DomPropose<T>),
-}
-
-/// A buffer that stores client requests whose deadline has already passed.
-pub(crate) struct LateBuffer<T: Entry> {
-    hash_map: HashMap<EntryId, DomPropose<T>>
-}
-
-impl<T: Entry> LateBuffer<T> {
-    /// Creates a new late buffer.
-    pub(crate) fn new() -> Self {
-        Self {
-            hash_map: HashMap::new(),
-        }
-    }
-
-    /// Returns true if the late buffer is empty, false otherwise.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.hash_map.is_empty()
-    }
-
-    /// Inserts the proposal into the buffer.
-    pub(crate) fn insert(&mut self, proposal: DomPropose<T>) {
-        // TODO check for duplicates
-        self.hash_map.insert(proposal.entry_id, proposal);
-    }
-
-    /// Returns the proposal with the given key, if any.
-    pub(crate) fn get(&self, key: EntryId) -> Option<&DomPropose<T>> {
-        self.hash_map.get(&key)
-    }
-
-    /// Removes the proposal from the buffer if it exists, and if so, returns it.
-    pub(crate) fn remove(&mut self, key: EntryId) -> Option<DomPropose<T>> {
-        self.hash_map.remove(&key)
-    }
-
-    /// Clears the buffer.
-    pub(crate) fn clear(&mut self) {
-        self.hash_map.clear();
-    }
 }

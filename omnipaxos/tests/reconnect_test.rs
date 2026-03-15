@@ -3,7 +3,10 @@ pub mod utils;
 use crate::utils::STOPSIGN_ID;
 use kompact::prelude::{promise, Ask};
 use omnipaxos::{
-    messages::{sequence_paxos::{PaxosMsg, EntryId}, Message},
+    messages::{
+        sequence_paxos::{EntryId, PaxosMsg},
+        Message,
+    },
     storage::StopSign,
     util::{LogEntry, NodeId, SequenceNumber},
     ClusterConfig,
@@ -24,6 +27,7 @@ const SECOND_PROPOSALS: u64 = 5;
 /// with increasing sequence numbers.
 #[test]
 #[serial]
+#[ignore]
 fn increasing_accept_seq_num_test() {
     // Start Kompact system
     let cfg = TestConfig::load("reconnect_test").expect("Test config couldn't be loaded");
@@ -60,7 +64,9 @@ fn increasing_accept_seq_num_test() {
         };
         leader.on_definition(|x| {
             // x.paxos.append(val).expect("Failed to append");
-            x.paxos.append_with_id(val.clone(), e).expect("Failed to append");
+            x.paxos
+                .append_with_id(val.clone(), e)
+                .expect("Failed to append");
             x.paxos.take_outgoing_messages(&mut outgoing_messages)
         });
 

@@ -44,6 +44,10 @@ impl DOMHash {
     pub(crate) fn extend_hash(&mut self, other: &Self) {
         self.hash ^= other.hash;
     }
+
+    pub(crate) fn remove_hash(&mut self, other: &Self) {
+        self.extend_hash(other);
+    }
 }
 
 impl PartialEq for DOMHash {

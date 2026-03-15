@@ -89,13 +89,6 @@ where
         }
     }
 
-    // fn forward_buffered_proposals(&mut self) {
-    //     let proposals = std::mem::take(&mut self.buffered_proposals);
-    //     if !proposals.is_empty() {
-    //         self.forward_proposals(proposals);
-    //     }
-    // }
-
     pub(crate) fn handle_acceptdecide(&mut self, acc_dec: AcceptDecide<T>) {
         if self.check_valid_ballot(acc_dec.n)
             && self.state == (Role::Follower, Phase::Accept)
@@ -136,17 +129,17 @@ where
             let idx = base_idx + offset;
             let expected_hash = DOMHash::with(meta.entry_id, meta.deadline);
             let matches_unsynced = self.unsynced_log.get(&idx).is_some_and(|entry| {
-                entry.entry_id == meta.entry_id && entry.entry_hash == expected_hash
+                entry.entry_id == meta.entry_id && entry.deadline == meta.deadline
             });
 
             if matches_unsynced {
                 self.unsynced_log.remove(&idx);
-                self.unsynced_hash.extend_hash(&expected_hash);
+                self.unsynced_hash.remove_hash(&expected_hash);
             } else {
+                // Entry cannot be in buffer if it is unynced log
+                self.dom.remove_from_buffers(meta.entry_id);
                 mismatch = true;
             }
-
-            self.dom.remove_from_buffers(meta.entry_id);
         }
 
         if mismatch {

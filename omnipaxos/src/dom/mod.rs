@@ -5,6 +5,8 @@ use crate::messages::sequence_paxos::{DomAck, DomPropose, EntryId, ClockTimestam
 use crate::sequence_paxos::Role;
 use crate::storage::Entry;
 use crate::util::{NodeId, PhysicalClock};
+#[cfg(feature = "benchmark")]
+use std::collections::HashMap;
 
 mod buffer;
 mod owd_estimator;
@@ -24,6 +26,17 @@ where
     outgoing_owd_estimates: OutgoingOwdTracker,
     eb: EarlyBuffer<T>,
     lb: LateBuffer<T>,
+}
+
+#[cfg(feature = "benchmark")]
+/// Snapshot of DOM one-way delay estimates used for benchmark output.
+pub struct DomOwdSnapshot {
+    /// Current incoming OWD estimates keyed by sender node id.
+    pub incoming_estimates: HashMap<NodeId, i64>,
+    /// Current outgoing OWD estimates keyed by receiver node id.
+    pub outgoing_estimates: HashMap<NodeId, i64>,
+    /// Maximum outgoing OWD estimate across all peers.
+    pub max_outgoing_estimate: i64,
 }
 
 impl<'a, T, C> Dom<'a, T, C>
@@ -133,6 +146,15 @@ where
     /// Handles a DOM ack.
     pub(crate) fn handle_dom_ack(&mut self, ack: DomAck) {
         self.outgoing_owd_estimates.update(ack.sender, ack.estimated_owd);
+    }
+
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn owd_snapshot(&self) -> DomOwdSnapshot {
+        DomOwdSnapshot {
+            incoming_estimates: self.incoming_owd_estimates.estimates_snapshot(),
+            outgoing_estimates: self.outgoing_owd_estimates.estimates_snapshot(),
+            max_outgoing_estimate: self.outgoing_owd_estimates.get_max_owd(),
+        }
     }
 
     /// Removes the proposal with the given entry id from the buffers. Returns the proposal if it was found in any of the buffers.

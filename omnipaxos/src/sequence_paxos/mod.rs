@@ -1,5 +1,7 @@
 use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::LeaderState};
 use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
+#[cfg(feature = "benchmark")]
+use crate::dom::DomOwdSnapshot;
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
@@ -177,6 +179,11 @@ where
     #[cfg(feature = "benchmark")]
     pub(crate) fn get_fast_path_ratio(&self) -> (u64, u64) {
         (self.fast_path_decisions, self.slow_path_decisions)
+    }
+
+    #[cfg(feature = "benchmark")]
+    pub(crate) fn get_dom_owd_snapshot(&self) -> DomOwdSnapshot {
+        self.dom.owd_snapshot()
     }
 
     pub(crate) fn get_promise(&self) -> Ballot {

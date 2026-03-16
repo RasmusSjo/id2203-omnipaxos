@@ -6,7 +6,13 @@ use crate::{
     sequence_paxos::{Phase, SequencePaxos},
     storage::{Entry, StopSign, Storage},
     util::{
-        defaults::{BUFFER_SIZE, ELECTION_TIMEOUT, FLUSH_BATCH_TIMEOUT, RESEND_MESSAGE_TIMEOUT},
+        defaults::{
+            BUFFER_SIZE,
+            ELECTION_TIMEOUT,
+            FLUSH_BATCH_TIMEOUT,
+            RESEND_MESSAGE_TIMEOUT,
+            RELEASE_REQUESTS_TIMEOUT
+        },
         ConfigurationId, FlexibleQuorum, LogEntry, LogicalClock, NodeId, PhysicalClock,
     },
     utils::{ui, ui::ClusterState},
@@ -84,6 +90,9 @@ impl OmniPaxosConfig {
                 self.server_config.resend_message_tick_timeout,
             ),
             flush_batch_clock: LogicalClock::with(self.server_config.flush_batch_tick_timeout),
+            release_requests_clock: LogicalClock::with(
+                self.server_config.release_requests_poll_timeout
+            ),
             seq_paxos: SequencePaxos::with(self.into(), storage, clock),
         })
     }
@@ -184,6 +193,8 @@ pub struct ServerConfig {
     pub batch_size: usize,
     /// The number of calls to `tick()` before the batched log entries are flushed.
     pub flush_batch_tick_timeout: u64,
+    /// The number of calls to `poll()` before releasing buffered requests.
+    pub release_requests_poll_timeout: u64,
     /// Custom priority for this node to be elected as the leader.
     pub leader_priority: u32,
     /// The path where the default logger logs events.
@@ -209,6 +220,10 @@ impl ServerConfig {
             self.resend_message_tick_timeout != 0,
             "Resend message tick timeout must be greater than 0"
         );
+        valid_config!(
+            self.release_requests_poll_timeout != 0,
+            "Release requests tick timeout must be greater than 0"
+        );
         Ok(())
     }
 }
@@ -222,6 +237,7 @@ impl Default for ServerConfig {
             buffer_size: BUFFER_SIZE,
             batch_size: 1,
             flush_batch_tick_timeout: FLUSH_BATCH_TIMEOUT,
+            release_requests_poll_timeout: RELEASE_REQUESTS_TIMEOUT,
             leader_priority: 0,
             #[cfg(feature = "logging")]
             logger_file_path: None,
@@ -245,6 +261,7 @@ where
     election_clock: LogicalClock,
     resend_message_clock: LogicalClock,
     flush_batch_clock: LogicalClock,
+    release_requests_clock: LogicalClock,
 }
 
 impl<'a, T, B, C> OmniPaxos<'a, T, B, C>
@@ -409,12 +426,18 @@ where
         if self.flush_batch_clock.tick_and_check_timeout() {
             self.seq_paxos.flush_batch_timeout();
         }
+    }
 
-        // TODO probably guard this in some way, maybe if reconfigured?
-        if let None = self.is_reconfigured() {
-            self.seq_paxos.tick();
+    /// Increments the internal logic clock for the release of requests. The release of
+    /// requests is triggered every `release_requests_timeout` number of calls to this function. 
+    pub fn poll(&mut self) {
+        if self.release_requests_clock.tick_and_check_timeout() {
+            if let None = self.is_reconfigured() {
+                self.seq_paxos.release_requests();
+            }
         }
     }
+
 
     /// Manually attempt to become the leader by incrementing this instance's Ballot. Calling this
     /// function may not result in gainig leadership if other instances are competing for

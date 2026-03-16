@@ -92,7 +92,7 @@ fn inject_unsynced(
             entry: Value::with_id(value_id),
         }),
     }));
-    op.tick();
+    op.poll();
     let mut ignored = vec![];
     op.take_outgoing_messages(&mut ignored);
 }
@@ -361,7 +361,7 @@ fn prepare_recovery_unsynced_no_threshold_stops_recovery_test() {
                 entry: Value::with_id(50_001),
             }),
         }));
-        leader.tick();
+        leader.poll();
 
         let first = recovered_first_entry(&leader).expect("leader should accept a new proposal");
         assert_eq!(first, Value::with_id(50_001), "chosen followers: {:?}", chosen);

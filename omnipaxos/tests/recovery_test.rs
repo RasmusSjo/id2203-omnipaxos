@@ -33,12 +33,7 @@ fn leader_fail_follower_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
-    let other_log: Vec<LogEntry<Value>> = sys
-        .nodes
-        .iter()
-        .find(|(pid, _)| **pid != leader)
-        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
-        .expect("No other node found");
+    let other_log = read_log_from_node(&sys, select_compare_node(&sys, &[leader]));
 
     verify_log_unordered(read_log.clone(), proposals);
     verify_matching_logs(&read_log, &other_log);
@@ -75,12 +70,7 @@ fn leader_fail_leader_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
-    let other_log: Vec<LogEntry<Value>> = sys
-        .nodes
-        .iter()
-        .find(|(pid, _)| **pid != leader)
-        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
-        .expect("No other node found");
+    let other_log = read_log_from_node(&sys, select_compare_node(&sys, &[leader]));
 
     verify_log_unordered(read_log.clone(), proposals);
     verify_matching_logs(&read_log, &other_log);
@@ -120,12 +110,7 @@ fn follower_fail_leader_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
-    let other_log: Vec<LogEntry<Value>> = sys
-        .nodes
-        .iter()
-        .find(|(pid, _)| **pid != leader)
-        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
-        .expect("No other node found");
+    let other_log = read_log_from_node(&sys, select_compare_node(&sys, &[leader, follower]));
 
     verify_log_unordered(read_log.clone(), proposals);
     verify_matching_logs(&read_log, &other_log);
@@ -165,12 +150,7 @@ fn follower_fail_follower_propose_test() {
         .get(&leader)
         .expect("No SequencePaxos component found");
     let read_log: Vec<LogEntry<Value>> = recovery_px.on_definition(|x| x.read_decided_log());
-    let other_log: Vec<LogEntry<Value>> = sys
-        .nodes
-        .iter()
-        .find(|(pid, _)| **pid != leader)
-        .map(|(_, node)| node.on_definition(|x| x.read_decided_log()))
-        .expect("No other node found");
+    let other_log = read_log_from_node(&sys, select_compare_node(&sys, &[leader, follower]));
 
     verify_log_unordered(read_log.clone(), proposals);
     verify_matching_logs(&read_log, &other_log);
@@ -236,4 +216,22 @@ pub fn kill_and_recover_node(sys: &mut TestSystem, cfg: &TestConfig, pid: NodeId
         StorageType::with(cfg.storage_type, &format!("{storage_path}{pid}"));
     sys.create_node(pid, cfg, storage);
     sys.start_node(pid);
+}
+
+fn select_compare_node(sys: &TestSystem, excluded: &[NodeId]) -> NodeId {
+    let mut candidates: Vec<NodeId> = sys
+        .nodes
+        .keys()
+        .copied()
+        .filter(|pid| !excluded.contains(pid))
+        .collect();
+    candidates.sort_unstable();
+    candidates.into_iter().next().expect("No other node found")
+}
+
+fn read_log_from_node(sys: &TestSystem, pid: NodeId) -> Vec<LogEntry<Value>> {
+    sys.nodes
+        .get(&pid)
+        .unwrap_or_else(|| panic!("No SequencePaxos component found for node {pid}"))
+        .on_definition(|x| x.read_decided_log())
 }

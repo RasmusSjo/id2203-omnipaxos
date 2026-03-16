@@ -145,7 +145,7 @@ fn retain_without_follower_accepted(
 fn tick_nodes(nodes: &mut [SimNode], pids: &[NodeId], mailbox: &mut VecDeque<Message<Value>>) {
     for pid in pids {
         let idx = node_idx(nodes, *pid);
-        nodes[idx].op.tick();
+        nodes[idx].op.poll();
         mailbox.extend(drain_outgoing_from(nodes, *pid));
     }
 }

@@ -1,7 +1,7 @@
 use super::{ballot_leader_election::Ballot, messages::sequence_paxos::*, util::LeaderState};
-use crate::dom::{Dom, EstimatorStrategy, OwdEstimatorConfig};
 #[cfg(feature = "benchmark")]
 use crate::dom::DomOwdSnapshot;
+use crate::dom::{Dom, OwdEstimatorConfig};
 #[cfg(feature = "logging")]
 use crate::utils::logger::create_logger;
 use crate::{
@@ -94,15 +94,8 @@ where
         let internal_storage_config = InternalStorageConfig {
             batch_size: config.batch_size,
         };
-        let owd_config = OwdEstimatorConfig::new(
-            10,
-            10_000,
-            3, // Same as Nezha
-            EstimatorStrategy::Percentile { percentile: 0.5 },
-        )
-        .unwrap();
         let mut paxos = SequencePaxos {
-            dom: Dom::new(owd_config, clock, pid),
+            dom: Dom::new(config.owd_config, clock, pid),
             internal_storage: InternalStorage::with(
                 storage,
                 internal_storage_config,
@@ -616,6 +609,7 @@ pub(crate) struct SequencePaxosConfig {
     peers: Vec<NodeId>,
     buffer_size: usize,
     pub(crate) batch_size: usize,
+    owd_config: OwdEstimatorConfig,
     flexible_quorum: Option<FlexibleQuorum>,
     #[cfg(feature = "logging")]
     logger_file_path: Option<String>,
@@ -638,6 +632,7 @@ impl From<OmniPaxosConfig> for SequencePaxosConfig {
             flexible_quorum: config.cluster_config.flexible_quorum,
             buffer_size: config.server_config.buffer_size,
             batch_size: config.server_config.batch_size,
+            owd_config: config.server_config.owd_config,
             #[cfg(feature = "logging")]
             logger_file_path: config.server_config.logger_file_path,
             #[cfg(feature = "logging")]

@@ -1,24 +1,22 @@
+#[cfg(feature = "benchmark")]
+use crate::dom::DomOwdSnapshot;
 use crate::messages::sequence_paxos::EntryId;
 use crate::{
     ballot_leader_election::{Ballot, BallotLeaderElection},
+    dom::OwdEstimatorConfig,
     errors::{valid_config, ConfigError},
     messages::Message,
     sequence_paxos::{Phase, SequencePaxos},
     storage::{Entry, StopSign, Storage},
     util::{
         defaults::{
-            BUFFER_SIZE,
-            ELECTION_TIMEOUT,
-            FLUSH_BATCH_TIMEOUT,
+            BUFFER_SIZE, ELECTION_TIMEOUT, FLUSH_BATCH_TIMEOUT, RELEASE_REQUESTS_TIMEOUT,
             RESEND_MESSAGE_TIMEOUT,
-            RELEASE_REQUESTS_TIMEOUT
         },
         ConfigurationId, FlexibleQuorum, LogEntry, LogicalClock, NodeId, PhysicalClock,
     },
     utils::{ui, ui::ClusterState},
 };
-#[cfg(feature = "benchmark")]
-use crate::dom::DomOwdSnapshot;
 #[cfg(any(feature = "toml_config", feature = "serde"))]
 use serde::Deserialize;
 #[cfg(feature = "serde")]
@@ -91,7 +89,7 @@ impl OmniPaxosConfig {
             ),
             flush_batch_clock: LogicalClock::with(self.server_config.flush_batch_tick_timeout),
             release_requests_clock: LogicalClock::with(
-                self.server_config.release_requests_poll_timeout
+                self.server_config.release_requests_poll_timeout,
             ),
             seq_paxos: SequencePaxos::with(self.into(), storage, clock),
         })
@@ -178,6 +176,7 @@ impl ClusterConfig {
 /// * `batch_size`: The size of the buffer for log batching. The default is 1, which means no batching.
 /// * `logger_file_path`: The path where the default logger logs events.
 /// * `leader_priority` : Custom priority for this node to be elected as the leader.
+/// * `owd_config`: Configuration for DOM one-way delay estimation.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "toml_config", derive(Deserialize), serde(default))]
 pub struct ServerConfig {
@@ -197,6 +196,8 @@ pub struct ServerConfig {
     pub release_requests_poll_timeout: u64,
     /// Custom priority for this node to be elected as the leader.
     pub leader_priority: u32,
+    /// Configuration for DOM one-way delay estimation.
+    pub owd_config: OwdEstimatorConfig,
     /// The path where the default logger logs events.
     #[cfg(feature = "logging")]
     pub logger_file_path: Option<String>,
@@ -224,6 +225,7 @@ impl ServerConfig {
             self.release_requests_poll_timeout != 0,
             "Release requests tick timeout must be greater than 0"
         );
+        self.owd_config.validate()?;
         Ok(())
     }
 }
@@ -239,6 +241,7 @@ impl Default for ServerConfig {
             flush_batch_tick_timeout: FLUSH_BATCH_TIMEOUT,
             release_requests_poll_timeout: RELEASE_REQUESTS_TIMEOUT,
             leader_priority: 0,
+            owd_config: OwdEstimatorConfig::default(),
             #[cfg(feature = "logging")]
             logger_file_path: None,
             #[cfg(feature = "logging")]
@@ -429,7 +432,7 @@ where
     }
 
     /// Increments the internal logic clock for the release of requests. The release of
-    /// requests is triggered every `release_requests_timeout` number of calls to this function. 
+    /// requests is triggered every `release_requests_timeout` number of calls to this function.
     pub fn poll(&mut self) {
         if self.release_requests_clock.tick_and_check_timeout() {
             if let None = self.is_reconfigured() {
@@ -437,7 +440,6 @@ where
             }
         }
     }
-
 
     /// Manually attempt to become the leader by incrementing this instance's Ballot. Calling this
     /// function may not result in gainig leadership if other instances are competing for

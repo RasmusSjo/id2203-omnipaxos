@@ -1,28 +1,31 @@
-use std::collections::{HashMap, VecDeque};
 use crate::errors::{valid_config, ConfigError};
 use crate::util::NodeId;
-#[cfg(feature = "toml_config")]
+#[cfg(any(feature = "serde", feature = "toml_config"))]
 use serde::Deserialize;
+#[cfg(feature = "serde")]
+use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
 
 /// Configuration for the one-way delay estimator.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "toml_config", derive(Deserialize))]
-pub(crate) struct OwdEstimatorConfig {
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(any(feature = "serde", feature = "toml_config"), derive(Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize))]
+#[cfg_attr(any(feature = "serde", feature = "toml_config"), serde(default))]
+pub struct OwdEstimatorConfig {
     /// The size of the sliding window used to estimate the one-way delay.
     /// I.e. the number of samples to store per sender.
-    window_size: usize,
+    pub window_size: usize,
     /// The upper bound on the one-way delay.
-    max_owd: i64,
+    pub max_owd: i64,
     /// The error bound factor for the one-way delay.
-    uncertainty_beta: i64,
+    pub uncertainty_beta: i64,
     /// The strategy used to estimate the one-way delay.
-    strategy: EstimatorStrategy,
+    pub strategy: EstimatorStrategy,
 }
 
 impl OwdEstimatorConfig {
-
     /// Creates a new configuration used to configure an OWD estimator.
-    pub(crate) fn new(
+    pub fn new(
         window_size: usize,
         max_owd: i64,
         uncertainty_beta: i64,
@@ -39,7 +42,8 @@ impl OwdEstimatorConfig {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), ConfigError> {
+    /// Validates the OWD estimator configuration.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         valid_config!(self.window_size > 0, "window_size must be > 0");
         valid_config!(self.max_owd >= 0, "max_owd must be >= 0");
         valid_config!(self.uncertainty_beta >= 0, "uncertainty_beta must be >= 0");
@@ -59,14 +63,30 @@ impl OwdEstimatorConfig {
     }
 }
 
+impl Default for OwdEstimatorConfig {
+    fn default() -> Self {
+        Self {
+            window_size: 10,
+            max_owd: 10_000,
+            uncertainty_beta: 3,
+            strategy: EstimatorStrategy::Percentile { percentile: 0.5 },
+        }
+    }
+}
+
 /// The strategy that should be used when estimating the one-way delay.
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "toml_config", derive(Deserialize))]
-pub(crate) enum EstimatorStrategy {
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(any(feature = "serde", feature = "toml_config"), derive(Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize))]
+#[cfg_attr(
+    any(feature = "serde", feature = "toml_config"),
+    serde(tag = "type", rename_all = "snake_case")
+)]
+pub enum EstimatorStrategy {
     /// Estimate the one-way delay using a percentile of the observed delays.
     Percentile {
         /// The percentile to use for estimating the one-way delay.
-        percentile: f64
+        percentile: f64,
     },
     /// Estimate the one-way delay using a moving average of the observed delays.
     MovingAverage,
@@ -137,7 +157,8 @@ impl OwdEstimator {
     pub(crate) fn update(&mut self, id: NodeId, sample: OwdSample) {
         let window_size = self.config.window_size;
 
-        let samples = self.samples
+        let samples = self
+            .samples
             .entry(id)
             .or_insert_with(|| VecDeque::with_capacity(window_size));
 
@@ -151,7 +172,7 @@ impl OwdEstimator {
             samples,
             self.config.strategy,
             self.config.uncertainty_beta,
-            self.config.max_owd
+            self.config.max_owd,
         );
         self.estimates.insert(id, estimate);
     }
@@ -160,7 +181,7 @@ impl OwdEstimator {
         samples: &VecDeque<OwdSample>,
         strategy: EstimatorStrategy,
         beta: i64,
-        max_owd: i64
+        max_owd: i64,
     ) -> i64 {
         debug_assert!(!samples.is_empty());
 
@@ -169,7 +190,9 @@ impl OwdEstimator {
                 Self::percentile_delay(samples, percentile)
             }
             EstimatorStrategy::MovingAverage => Self::moving_average_delay(samples),
-            EstimatorStrategy::Fixed => { return max_owd; },
+            EstimatorStrategy::Fixed => {
+                return max_owd;
+            }
         };
 
         // Uncertainty of the most recent sample

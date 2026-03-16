@@ -1101,9 +1101,46 @@ pub mod verification {
         }
     }
 
-    /// Verify that two logs are identical, including entry order.
+    /// Verify that two logs represent the same decided suffix.
+    ///
+    /// A node may compact an already decided prefix into a snapshot while another node still keeps
+    /// the decided entries in the log. Since that prefix has already been delivered to clients, we
+    /// only require the overlapping decided suffix to match exactly.
     pub fn verify_matching_logs(lhs: &[LogEntry<Value>], rhs: &[LogEntry<Value>]) {
-        assert_eq!(lhs, rhs, "logs differ\nleft: {:?}\nright: {:?}", lhs, rhs);
+        fn suffix_from<'a>(
+            log: &'a [LogEntry<Value>],
+            from_idx: usize,
+        ) -> Option<&'a [LogEntry<Value>]> {
+            match log {
+                [LogEntry::Snapshotted(s), rest @ ..] => {
+                    if from_idx < s.trimmed_idx {
+                        None
+                    } else {
+                        rest.get((from_idx - s.trimmed_idx)..)
+                    }
+                }
+                _ => log.get(from_idx..),
+            }
+        }
+
+        let lhs_compacted = match lhs.first() {
+            Some(LogEntry::Snapshotted(s)) => s.trimmed_idx,
+            _ => 0,
+        };
+        let rhs_compacted = match rhs.first() {
+            Some(LogEntry::Snapshotted(s)) => s.trimmed_idx,
+            _ => 0,
+        };
+        let compare_from = lhs_compacted.max(rhs_compacted);
+
+        let lhs_suffix = suffix_from(lhs, compare_from);
+        let rhs_suffix = suffix_from(rhs, compare_from);
+
+        assert_eq!(
+            lhs_suffix, rhs_suffix,
+            "logs differ from index {compare_from}\nleft: {:?}\nright: {:?}",
+            lhs, rhs
+        );
     }
 
     /// Verify that the log has a single snapshot of the latest entry.

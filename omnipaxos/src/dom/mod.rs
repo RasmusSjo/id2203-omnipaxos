@@ -4,13 +4,13 @@ use crate::messages::sequence_paxos::{ClockTimestamp, DomAck, DomPropose, EntryI
 use crate::sequence_paxos::Role;
 use crate::storage::Entry;
 use crate::util::{NodeId, PhysicalClock};
+use std::cmp::max;
 #[cfg(feature = "benchmark")]
 use std::collections::HashMap;
-use std::cmp::max;
 
 mod buffer;
 mod owd_estimator;
-pub(crate) use owd_estimator::{EstimatorStrategy, OwdEstimatorConfig};
+pub use owd_estimator::{EstimatorStrategy, OwdEstimatorConfig};
 
 const ONE_MICRO_SECOND: i64 = 1000;
 

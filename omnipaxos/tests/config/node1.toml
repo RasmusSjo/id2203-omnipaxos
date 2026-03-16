@@ -18,3 +18,4 @@ buffer_size = 10000
 batch_size = 2
 logger_file_path = "logs/paxos_1.log"
 leader_priority = 2
+owd_config = { window_size = 32, max_owd = 20000, uncertainty_beta = 4, strategy = { type = "percentile", percentile = 0.75 } }

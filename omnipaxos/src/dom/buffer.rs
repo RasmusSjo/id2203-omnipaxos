@@ -140,3 +140,90 @@ pub(crate) enum EarlyBufferInsertError<T: Entry> {
     /// The request was late and could not be inserted.
     Late(DomPropose<T>),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dom::test_utils::*;
+    
+    #[test]
+    fn early_buffer_correct_insert_test() {
+        let mut buffer: EarlyBuffer<TestEntry> = EarlyBuffer::new();
+
+        let propose1 = DomPropose {
+            entry_id: EntryId { client_id: 0, command_id: 0 },
+            sender: 0,
+            sent_time: (10, 5),
+            deadline: 20,
+            entry: TestEntry,
+        };
+
+        let res = buffer.insert(propose1.clone());
+        assert!(res.is_ok(), "First proposal should be accepted");
+
+        let propose2 = DomPropose {
+            entry_id: EntryId { client_id: 1, command_id: 0 },
+            sender: 0,
+            sent_time: (20, 5),
+            deadline: 30,
+            entry: TestEntry,
+        };
+
+        let propose3 = DomPropose {
+            entry_id: EntryId { client_id: 0, command_id: 1 },
+            sender: 0,
+            sent_time: (20, 5),
+            deadline: 30,
+            entry: TestEntry,
+        };
+
+        let res = buffer.insert(propose2.clone());
+        assert!(res.is_ok(), "Second proposal should be accepted");
+        let res = buffer.insert(propose3.clone());
+        assert!(res.is_ok(), "Third proposal should be accepted");
+
+        let not_ready = buffer.pop_ready(10).is_none();
+        assert!(not_ready, "No proposals should be ready yet");
+
+        let first= buffer.pop_ready(20).unwrap();
+        assert!(compare_proposes(first, propose1), "First proposal should be released");
+
+        let second = buffer.pop_ready(40).unwrap();
+        let third = buffer.pop_ready(40).unwrap();
+        assert!(compare_proposes(second, propose3), "Tie-break should order this before the second proposal");
+        assert!(compare_proposes(third, propose2), "Tie-break should order this after the third proposal");
+
+        let empty = buffer.peek();
+        assert!(empty.is_none(), "Early buffer should be empty");
+    }
+
+    #[test]
+    fn early_buffer_reject_late_test() {
+        let mut buffer: EarlyBuffer<TestEntry> = EarlyBuffer::new();
+
+        let first_propose = DomPropose {
+            entry_id: EntryId { client_id: 0, command_id: 0 },
+            sender: 0,
+            sent_time: (10, 5),
+            deadline: 20,
+            entry: TestEntry,
+        };
+
+        let res = buffer.insert(first_propose);
+        assert!(res.is_ok(), "First proposal should be accepted");
+
+        let ready = buffer.pop_ready(25).unwrap();
+        assert_eq!(buffer.last_released.unwrap().deadline, ready.deadline);
+
+        let late_propose = DomPropose {
+            entry_id: EntryId { client_id: 1, command_id: 0 },
+            sender: 1,
+            sent_time: (5, 1),
+            deadline: ready.deadline - 1,
+            entry: TestEntry,
+        };
+
+        let err = buffer.insert(late_propose);
+        assert!(err.is_err(), "Late proposal should not be accepted");
+    }
+}

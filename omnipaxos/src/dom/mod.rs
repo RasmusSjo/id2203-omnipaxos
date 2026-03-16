@@ -10,6 +10,8 @@ use std::cmp::max;
 
 mod buffer;
 mod owd_estimator;
+mod test_utils;
+
 pub(crate) use owd_estimator::{EstimatorStrategy, OwdEstimatorConfig};
 
 const ONE_MICRO_SECOND: i64 = 1000;
@@ -160,5 +162,86 @@ where
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::util::{SystemClock, SYSTEM_CLOCK};
+    use super::*;
+    use crate::dom::test_utils::*;
+
+    #[test]
+    fn handle_dom_propose_test() {
+        let clock = &SYSTEM_CLOCK;
+        let config = OwdEstimatorConfig::new(
+            5,
+            100,
+            10,
+            EstimatorStrategy::Percentile { percentile: 0.5 },
+        ).unwrap();
+        let mut dom: Dom<TestEntry, SystemClock> = Dom::new(config, clock, 0);
+
+        let propose1 = dom.create_dom_propose(
+            TestEntry,
+            EntryId { client_id: 1, command_id: 0 }
+        );
+        let propose2 = dom.create_dom_propose(
+            TestEntry,
+            EntryId { client_id: 0, command_id: 1 }
+        );
+        let mut propose3 = propose1.clone();
+        propose3.deadline = propose1.deadline;
+        propose3.entry_id = EntryId { client_id: 0, command_id: 0 };
+
+        let _ = dom.handle_dom_propose(propose1.clone(), Role::Leader);
+        let _ = dom.handle_dom_propose(propose2.clone(), Role::Leader);
+        let ack = dom.handle_dom_propose(propose3.clone(), Role::Leader);
+
+        // Ensure that the ack contains the correct OWD estimate
+        assert_eq!(ack.estimated_owd, dom.incoming_owd_estimates.estimate_for(propose3.sender),
+                   "ack should contain the correct OWD estimate");
+
+        let ready = dom.release_ready();
+
+        // max_owd is short enough for the deadline to pass
+        // Proposals should be ordered p3 > p1 (reorder + tie-break), p1 > p2 (deadline)
+        assert_eq!(ready.len(), 3, "dom should have released 3 proposals");
+        assert!(compare_proposes(ready[0].clone(), propose3));
+        assert!(compare_proposes(ready[1].clone(), propose1));
+        assert!(compare_proposes(ready[2].clone(), propose2));
+
+        // Ensure follower ignores late proposals
+        let mut late_follower = dom.create_dom_propose(
+            TestEntry,
+            EntryId { client_id: 0, command_id: 2 }
+        );
+        late_follower.deadline = 1;
+        let _ = dom.handle_dom_propose(late_follower.clone(), Role::Follower);
+        let ready = dom.release_ready();
+        assert_eq!(ready.len(), 0, "follower should not add late proposals to the buffer");
+
+        // Verify that leader extends the deadline of late proposals
+        let mut late_leader = dom.create_dom_propose(
+            TestEntry,
+            EntryId { client_id: 0, command_id: 3 }
+        );
+        late_leader.deadline = 1;
+        let ack = dom.handle_dom_propose(late_leader.clone(), Role::Leader);
+        let ready = dom.release_ready();
+        assert_eq!(ready.len(), 1,
+                   "leader should add late proposals to the buffer after extending the deadline");
+        assert_eq!(ready[0].entry_id, late_leader.entry_id);
+        assert!(ready[0].deadline > late_leader.deadline, "deadline should be extended");
+
+        // Verify correct use of OWD estimates when setting deadline
+        let owd_estimate = ack.estimated_owd;
+        dom.handle_dom_ack(ack);
+        let proposal = dom.create_dom_propose(
+            TestEntry,
+            EntryId { client_id: 0, command_id: 4 }
+        );
+        assert_eq!(proposal.deadline, proposal.sent_time.0 + owd_estimate,
+                   "deadline should be extended by OWD estimate");
     }
 }

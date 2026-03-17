@@ -264,3 +264,61 @@ impl OutgoingOwdTracker {
         self.estimates.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owd_estimator_test() {
+        let config = OwdEstimatorConfig {
+            window_size: 5,
+            max_owd: 100,
+            uncertainty_beta: 10,
+            strategy: EstimatorStrategy::Percentile { percentile: 0.5 },
+        };
+
+        let mut estimator = OwdEstimator::with_config(config);
+
+        let node = 0;
+
+        assert_eq!(estimator.estimate_for(node), 100, "Initial estimate should be max_owd when there are no samples");
+
+        estimator.update(node, OwdSample::new(10, 30, 5, 5));
+
+        // OWD = D + B(u_s + u_r)=120>100 [D=20, B=10, u_s=5, u_r=5]
+        assert_eq!(estimator.estimate_for(node), 100, "OWD should not exceed max_owd");
+
+        estimator.update(node, OwdSample::new(20, 40, 5, 5));
+        estimator.update(node, OwdSample::new(30, 50, 5, 5));
+        estimator.update(node, OwdSample::new(40, 50, 5, 5));
+
+        // Update uncertainty of last message
+        estimator.update(node, OwdSample::new(50, 70, 2, 2));
+
+        // [D=20, B=10, u_s=2, u_r=2]
+        assert_eq!(estimator.estimate_for(node), 60, "OWD should use uncertainty of last message");
+
+        // Push OWD=20 samples outside percentile range
+        estimator.update(node, OwdSample::new(60, 70, 2, 2));
+        estimator.update(node, OwdSample::new(70, 80, 2, 2));
+        estimator.update(node, OwdSample::new(80, 90, 2, 2));
+
+        assert_eq!(estimator.estimate_for(node), 50, "OWD should use percentile 0.5");
+    }
+
+    #[test]
+    fn owd_tracker_test() {
+        let default_owd = 100;
+        let mut tracker = OutgoingOwdTracker::new(default_owd);
+
+        assert_eq!(tracker.get(0), default_owd, "Tracker should return default estimate for unknown peer");
+
+        tracker.update(0, 20);
+        assert_eq!(tracker.get(0), 20, "Tracker should return updated estimate");
+
+        tracker.update(1, 30);
+
+        assert_eq!(tracker.get_max_owd(), 30, "Tracker should return max estimate across all peers");
+    }
+}
